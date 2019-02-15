@@ -1033,6 +1033,42 @@ getargs_keywords(PyObject *self, PyObject *args, PyObject *kwargs)
         int_args[5], int_args[6], int_args[7], int_args[8], int_args[9]);
 }
 
+/* test PyArg_ParseTupleAndKeywords varargs arguments */
+static PyObject *
+getargs_varargs(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *keywords[] = {"arg1","arg2",NULL};
+    static const char fmt[] = "%i|i";
+    int arg1 = -1;
+    int arg2 = -1;
+    PyObject *out_args = NULL;
+    PyObject *out_kwargs = NULL;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, fmt, keywords,
+                                     &out_args, &out_kwargs, &arg1, &arg2))
+        return NULL;
+    return Py_BuildValue("iiNN", arg1, arg2, out_args, out_kwargs);
+}
+
+static PyObject *
+getargs_varargs2(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *keywords[] = {"arg1","arg2","arg3",NULL};
+    static const char fmt[] = "%i|$i@i";
+    int arg1 = -1;
+    int arg2 = -1;
+    int arg3 = -1;
+    PyObject *out_args = NULL;
+    PyObject *out_kwargs = NULL;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, fmt, keywords,
+                                     &out_args, &out_kwargs,
+                                     &arg1, &arg2, &arg3))
+        return NULL;
+    return Py_BuildValue("iiiNN", arg1, arg2, arg3, out_args, out_kwargs);
+}
+
+
 /* test PyArg_ParseTupleAndKeywords keyword-only arguments */
 static PyObject *
 getargs_keyword_only(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -4905,6 +4941,10 @@ static PyMethodDef TestMethods[] = {
     {"get_args", get_args, METH_VARARGS},
     {"get_kwargs", (PyCFunction)(void(*)(void))get_kwargs, METH_VARARGS|METH_KEYWORDS},
     {"getargs_tuple",           getargs_tuple,                   METH_VARARGS},
+    {"getargs_varargs", (PyCFunction)(void(*)(void))getargs_varargs,
+      METH_VARARGS|METH_KEYWORDS},
+    {"getargs_varargs2", (PyCFunction)(void(*)(void))getargs_varargs2,
+      METH_VARARGS|METH_KEYWORDS},
     {"getargs_keywords", (PyCFunction)(void(*)(void))getargs_keywords,
       METH_VARARGS|METH_KEYWORDS},
     {"getargs_keyword_only", (PyCFunction)(void(*)(void))getargs_keyword_only,

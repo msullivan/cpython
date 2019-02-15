@@ -683,6 +683,183 @@ class Keywords_TestCase(unittest.TestCase):
         else:
             self.fail('TypeError should have been raised')
 
+class VarArgs_TestCase(unittest.TestCase):
+    from _testcapi import getargs_varargs as getargs
+
+    def test_basic_args(self):
+        self.assertEqual(
+            self.getargs(1),
+            (1, -1, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2),
+            (1, 2, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3),
+            (1, 2, (3,), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, 4),
+            (1, 2, (3, 4), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, x=10),
+            (1, -1, (), {'x': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, x=10),
+            (1, 2, (), {'x': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, x=10),
+            (1, 2, (3,), {'x': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, 4, x=10, y='test'),
+            (1, 2, (3, 4), {'x': 10, 'y': 'test'})
+        )
+
+        self.assertEqual(
+            self.getargs(arg1=1),
+            (1, -1, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, arg2=2),
+            (1, 2, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(arg1=1, arg2=2),
+            (1, 2, (), {})
+        )
+
+
+        self.assertEqual(
+            self.getargs(arg1=1, arg2=2, y=10),
+            (1, 2, (), {'y': 10})
+        )
+
+    def test_required_positional_args(self):
+        # required positional arg missing
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required argument 'arg1' \(pos 1\)"):
+            self.getargs()
+
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required argument 'arg1' \(pos 1\)"):
+            self.getargs(arg2=10)
+
+class VarArgs2_TestCase(unittest.TestCase):
+    from _testcapi import getargs_varargs2 as getargs
+
+    def test_basic_args(self):
+        self.assertEqual(
+            self.getargs(1, arg3=3),
+            (1, -1, 3, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, arg3=3),
+            (1, -1, 3, (2,), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, arg3=4),
+            (1, -1, 4, (2, 3,), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, arg3=3, arg2=5),
+            (1, 5, 3, (), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, arg3=3, arg2=5),
+            (1, 5, 3, (2,), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, arg3=4, arg2=5),
+            (1, 5, 4, (2, 3,), {})
+        )
+
+        self.assertEqual(
+            self.getargs(1, arg3=3, y=10),
+            (1, -1, 3, (), {'y': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, arg3=3, y=10),
+            (1, -1, 3, (2,), {'y': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, arg3=4, y=10),
+            (1, -1, 4, (2, 3,), {'y': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, arg3=3, arg2=5, y=10),
+            (1, 5, 3, (), {'y': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, arg3=3, arg2=5, y=10),
+            (1, 5, 3, (2,), {'y': 10})
+        )
+
+        self.assertEqual(
+            self.getargs(1, 2, 3, arg3=4, arg2=5, y=10),
+            (1, 5, 4, (2, 3,), {'y': 10})
+        )
+
+    def test_required_positional_args(self):
+        # required positional arg missing
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required argument 'arg1' \(pos 1\)"):
+            self.getargs()
+
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required argument 'arg1' \(pos 1\)"):
+            self.getargs(arg3=10)
+
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required argument 'arg1' \(pos 1\)"):
+            self.getargs(arg3=10, y=10)
+
+
+    def test_required_keyword_args(self):
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required keyword-only argument 'arg3'"):
+            self.getargs(1)
+
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required keyword-only argument 'arg3'"):
+            self.getargs(1, 2, 3, 4)
+
+        with self.assertRaisesRegex(TypeError,
+            r"function missing required keyword-only argument 'arg3'"):
+            self.getargs(arg1=10, arg2=10)
+
+    def test_busted_keywords_args(self):
+        with self.assertRaisesRegex(TypeError,
+            r"keywords must be strings"):
+            self.getargs(1, 2, 3, **{'arg3': 1, 10: 10})
+
+        with self.assertRaisesRegex(TypeError,
+            r"argument for function given by name \('arg1'\) and position \(1\)"):
+            self.getargs(1, arg1=2, arg3=3)
+
+
 class KeywordOnly_TestCase(unittest.TestCase):
     def test_positional_args(self):
         # using all possible positional args
@@ -1273,8 +1450,8 @@ class SkipitemTest(unittest.TestCase):
 
             # skip parentheses, the error reporting is inconsistent about them
             # skip 'e', it's always a two-character code
-            # skip '|', '$', and '@', they don't represent arguments anyway
-            if c in '()e|$@':
+            # skip '|', '$', '@', '%', they don't represent arguments anyway
+            if c in '()e|$@%':
                 continue
 
             # test the format unit when not skipped

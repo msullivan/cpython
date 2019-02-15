@@ -199,6 +199,15 @@ _PyArg_VaParse_SizeT(PyObject *args, const char *format, va_list va)
 /* Handle cleanup of allocated memory in case of exception */
 
 static int
+cleanup_ref(PyObject *self, void *ptr)
+{
+    if (ptr) {
+        Py_DECREF((PyObject *)ptr);
+    }
+    return 0;
+}
+
+static int
 cleanup_ptr(PyObject *self, void *ptr)
 {
     if (ptr) {
@@ -1640,6 +1649,10 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
     PyObject *current_arg;
     freelistentry_t static_entries[STATIC_FREELIST_ENTRIES];
     freelist_t freelist;
+    int max_freelist_entries;
+    int bound_pos_args;
+
+    PyObject **p_args = NULL, **p_kwargs = NULL;
 
     freelist.entries = static_entries;
     freelist.first_available = 0;
@@ -1675,8 +1688,15 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
         }
     }
 
-    if (len > STATIC_FREELIST_ENTRIES) {
-        freelist.entries = PyMem_NEW(freelistentry_t, len);
+    if (*format == '%') {
+        p_args = va_arg(*p_va, PyObject **);
+        p_kwargs = va_arg(*p_va, PyObject **);
+        format++;
+    }
+
+    max_freelist_entries = len + !!p_args + !!p_kwargs;
+    if (max_freelist_entries > STATIC_FREELIST_ENTRIES) {
+        freelist.entries = PyMem_NEW(freelistentry_t, max_freelist_entries);
         if (freelist.entries == NULL) {
             PyErr_NoMemory();
             return 0;
@@ -1686,7 +1706,7 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
 
     nargs = PyTuple_GET_SIZE(args);
     nkwargs = (kwargs == NULL) ? 0 : PyDict_GET_SIZE(kwargs);
-    if (nargs + nkwargs > len) {
+    if (nargs + nkwargs > len && !p_args) {
         /* Adding "keyword" (when nargs == 0) prevents producing wrong error
            messages in some special cases (see bpo-31229). */
         PyErr_Format(PyExc_TypeError,
@@ -1744,7 +1764,7 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
                  * informative message (see below). */
                 break;
             }
-            if (max < nargs) {
+            if (max < nargs && !p_args) {
                 if (max == 0) {
                     PyErr_Format(PyExc_TypeError,
                                  "%.200s%s takes no positional arguments",
@@ -1788,7 +1808,7 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
             return cleanreturn(0, &freelist);
         }
         if (!skip) {
-            if (i < nargs) {
+            if (i < nargs && i < max) {
                 current_arg = PyTuple_GET_ITEM(args, i);
             }
             else if (nkwargs && i >= pos) {
@@ -1848,7 +1868,9 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
              * fulfilled and no keyword args left, with no further
              * validation. XXX Maybe skip this in debug build ?
              */
-            if (!nkwargs && !skip && !has_required_kws) {
+            if (!nkwargs && !skip && !has_required_kws &&
+                !p_args && !p_kwargs)
+            {
                 return cleanreturn(1, &freelist);
             }
         }
@@ -1885,11 +1907,28 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
         return cleanreturn(0, &freelist);
     }
 
+    bound_pos_args = Py_MIN(nargs, Py_MIN(max, len));
+    if (p_args) {
+        *p_args = PyTuple_GetSlice(args, bound_pos_args, nargs);
+        if (!*p_args) {
+            return cleanreturn(0, &freelist);
+        }
+        addcleanup(*p_args, &freelist, cleanup_ref);
+    }
+
+    if (p_kwargs) {
+        *p_kwargs = PyDict_New();
+        if (!*p_kwargs) {
+            return cleanreturn(0, &freelist);
+        }
+        addcleanup(*p_kwargs, &freelist, cleanup_ref);
+    }
+
     if (nkwargs > 0) {
-        PyObject *key;
+        PyObject *key, *value;
         Py_ssize_t j;
         /* make sure there are no arguments given by name and position */
-        for (i = pos; i < nargs; i++) {
+        for (i = pos; i < bound_pos_args && i < len; i++) {
             current_arg = _PyDict_GetItemStringWithError(kwargs, kwlist[i]);
             if (current_arg) {
                 /* arg present in tuple and in dict */
@@ -1907,7 +1946,7 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
         }
         /* make sure there are no extraneous keyword arguments */
         j = 0;
-        while (PyDict_Next(kwargs, &j, &key, NULL)) {
+        while (PyDict_Next(kwargs, &j, &key, &value)) {
             int match = 0;
             if (!PyUnicode_Check(key)) {
                 PyErr_SetString(PyExc_TypeError,
@@ -1921,13 +1960,19 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
                 }
             }
             if (!match) {
-                PyErr_Format(PyExc_TypeError,
-                             "'%U' is an invalid keyword "
-                             "argument for %.200s%s",
-                             key,
-                             (fname == NULL) ? "this function" : fname,
-                             (fname == NULL) ? "" : "()");
-                return cleanreturn(0, &freelist);
+                if (!p_kwargs) {
+                    PyErr_Format(PyExc_TypeError,
+                                 "'%U' is an invalid keyword "
+                                 "argument for %.200s%s",
+                                 key,
+                                 (fname == NULL) ? "this function" : fname,
+                                 (fname == NULL) ? "" : "()");
+                    return cleanreturn(0, &freelist);
+                } else {
+                    if (PyDict_SetItem(*p_kwargs, key, value) < 0) {
+                        return cleanreturn(0, &freelist);
+                    }
+                }
             }
         }
     }
