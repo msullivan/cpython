@@ -1757,7 +1757,7 @@ vgetargskeywords(PyObject *args, PyObject *kwargs, const char *format,
                                  " (%zd given)",
                                  (fname == NULL) ? "function" : fname,
                                  (fname == NULL) ? "" : "()",
-                                 (min != INT_MAX) ? "at most" : "exactly",
+                                 (min < max) ? "at most" : "exactly",
                                  max,
                                  max == 1 ? "" : "s",
                                  nargs);

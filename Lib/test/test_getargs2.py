@@ -921,7 +921,7 @@ class RequiredKeywordOnly3_TestCase(unittest.TestCase):
 
     def test_keyword_only(self):
         with self.assertRaisesRegex(TypeError,
-            r"function takes at most 1 positional argument \(2 given\)"):
+            r"function takes exactly 1 positional argument \(2 given\)"):
             self.getargs(1, 2)
 
 # Run all the same required keywords tests against the "fast" versions
