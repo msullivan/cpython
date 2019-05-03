@@ -2043,6 +2043,9 @@ find_keyword(PyObject *kwnames, PyObject *const *kwstack, PyObject *key)
         if (kwname == key) {
             return kwstack[i];
         }
+    }
+    for (i=0; i < nkwargs; i++) {
+        PyObject *kwname = PyTuple_GET_ITEM(kwnames, i);
         if (!PyUnicode_Check(kwname)) {
             /* ignore non-string keyword keys:
                an error will be raised below */
