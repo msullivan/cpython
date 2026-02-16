@@ -3033,6 +3033,7 @@ class AbstractPickleTests:
             'ExceptionGroup': (3, 11),
             '_IncompleteInputError': (3, 13),
             'PythonFinalizationError': (3, 13),
+            'ImportCycleError': (3, 15),
         }
         for t in builtins.__dict__.values():
             if isinstance(t, type) and issubclass(t, BaseException):
@@ -3059,6 +3060,7 @@ class AbstractPickleTests:
             'breakpoint': (3, 7),
             'aiter': (3, 10),
             'anext': (3, 10),
+            '__lazy_import__': (3, 15),
         }
         for t in builtins.__dict__.values():
             if isinstance(t, types.BuiltinFunctionType):
