@@ -357,5 +357,4 @@ Modules/_remote_debugging_module.c @pablogsal @ambv @1st1
 # Lazy imports (PEP 810)
 Objects/lazyimportobject.c                 @twouters @DinoV @pablogsal
 Include/internal/pycore_lazyimportobject.h @twouters @DinoV @pablogsal
-Lib/test/test_import/test_lazy_imports.py  @twouters @DinoV @pablogsal
-Lib/test/test_import/data/lazy_imports/    @twouters @DinoV @pablogsal
+Lib/test/test_lazy_import                  @yhg1s @DinoV @pablogsal
