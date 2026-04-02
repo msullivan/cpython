@@ -66,6 +66,93 @@ hand-editable conflicts:
 | `Python/clinic/bltinmodule.c.h` | `make clinic` |
 | `Python/clinic/sysmodule.c.h` | `make clinic` |
 
+## Follow-up PRs
+
+### #144726 — Fix build errors from PEP 810
+
+Clean cherry-pick, no conflicts.
+
+### #144733 — Fix refcount corruption in lazy import specialization
+
+Clean cherry-pick, no conflicts. (The spurious `Py_DECREF(value)` on a
+borrowed reference in the LOAD_GLOBAL lazy import bail-out was intentionally
+preserved in the #142351 backport so this fix applies cleanly.)
+
+### #144840 — Add CODEOWNERS for lazy imports
+
+**Conflict:** `.github/CODEOWNERS` — large context conflict due to 3.14/3.15
+divergence in the file. **Resolution:** Took 3.14's version and appended the new
+lazy imports entries at the end.
+
+### #144838 — Add test for circular lazy import crash
+
+Clean cherry-pick, no conflicts.
+
+### #144889 — Gate PEP 810 builtins in xpickle compat tests
+
+Clean cherry-pick, no conflicts.
+
+### #144893 — Fix ast.unparse for lazy import statements
+
+Clean cherry-pick, no conflicts.
+
+### #145054 — Use `lazy` imports in `collections`
+
+Clean cherry-pick, no conflicts.
+
+### #145086 — Check globals type in `__lazy_import__()`
+
+**Conflict:** `Lib/test/test_import/test_lazy_imports.py` — the
+`test_dunder_lazy_import_invalid_arguments` test method had been deleted during
+the #142351 backport (it didn't exist in the cherry-pick's HEAD side).
+**Resolution:** Restored the full test method from the incoming side, including
+the new `globals=1` type check.
+
+**Additional fix:** The test exposed a crash — `_PyImport_LazyImportModuleLevelObject`
+in `Python/import.c` was missing validation that `name` is a string and
+`level >= 0` before calling `get_abs_name()`. The 3.15 version has these checks
+but they were absent from the 3.14 backport of `46d5106cfa9`. Added the same
+`PyUnicode_Check(name)` and `level < 0` guards that exist on 3.15 in a separate
+fix commit.
+
+### #145213 — Fix "lazy from (...) import (...)" tests
+
+Clean cherry-pick, no conflicts.
+
+### #145221 — Fix compileall in lazy imports test data with bad syntax
+
+Clean cherry-pick, no conflicts.
+
+### #145336 — Make lazy import tests discoverable
+
+**Conflict:** `.github/CODEOWNERS` — same context conflict pattern as #144840.
+**Resolution:** Took 3.14's version and updated the lazy imports section to match
+the new test path (`Lib/test/test_lazy_import` instead of the old
+`Lib/test/test_import/test_lazy_imports.py` and `data/lazy_imports/` paths).
+
+### #144852 — Fix `__lazy_import__` crash with user-defined filters
+
+Clean cherry-pick, no conflicts.
+
+### #145404 — Refactor Platforms/WASI/\_\_main\_\_.py for lazy importing
+
+**Conflict:** `Platforms/WASI/` was renamed to `Tools/wasm/wasi/` on 3.14
+(modify/delete conflict). **Resolution:** Aborted the cherry-pick and manually
+applied the changes to `Tools/wasm/wasi/__main__.py` and created
+`Tools/wasm/wasi/_build.py`. Dropped the `.pre-commit-config.yaml` and
+`Platforms/WASI/.ruff.toml` changes since `Tools/wasm/.ruff.toml` already
+covers the 3.14 path.
+
+### #145988 — Fix sys.flags tuple size
+
+Clean cherry-pick, no conflicts.
+
+### #146371 — Ensure `PYTHON_LAZY_IMPORTS=none` overrides `__lazy_modules__`
+
+Clean cherry-pick, no conflicts.
+
+---
+
 ### `Python/specialize.c` — detailed notes
 
 This file had the most substantive conflict because PEP 810 on 3.15 relied on
