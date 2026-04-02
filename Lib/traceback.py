@@ -5,6 +5,7 @@ import itertools
 import linecache
 import sys
 import textwrap
+import types
 import warnings
 import codeop
 import keyword
@@ -1589,6 +1590,22 @@ def _substitution_cost(ch_a, ch_b):
     return _MOVE_COST
 
 
+def _is_lazy_import(obj, attr_name):
+    """Check if attr_name in obj's __dict__ is a lazy import.
+
+    Returns True if obj is a module and the attribute is a LazyImportType,
+    False otherwise. This avoids triggering module loading when computing
+    suggestions for AttributeError.
+    """
+    if not isinstance(obj, types.ModuleType):
+        return False
+    obj_dict = getattr(obj, '__dict__', None)
+    if obj_dict is None:
+        return False
+    attr_value = obj_dict.get(attr_name)
+    return isinstance(attr_value, types.LazyImportType)
+
+
 def _get_safe___dir__(obj):
     # Use obj.__dir__() to avoid a TypeError when calling dir(obj).
     # See gh-131001 and gh-139933.
@@ -1606,6 +1623,8 @@ def _compute_suggestion_error(exc_value, tb, wrong_name):
         obj = exc_value.obj
         try:
             d = _get_safe___dir__(obj)
+            # Filter out lazy imports to avoid triggering module loading
+            d = [x for x in d if not _is_lazy_import(obj, x)]
             hide_underscored = (wrong_name[:1] != '_')
             if hide_underscored and tb is not None:
                 while tb.tb_next is not None:
@@ -1621,6 +1640,8 @@ def _compute_suggestion_error(exc_value, tb, wrong_name):
         try:
             mod = __import__(exc_value.name)
             d = _get_safe___dir__(mod)
+            # Filter out lazy imports to avoid triggering module loading
+            d = [x for x in d if not _is_lazy_import(mod, x)]
             if wrong_name[:1] != '_':
                 d = [x for x in d if x[:1] != '_']
         except Exception:

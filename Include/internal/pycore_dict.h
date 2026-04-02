@@ -43,6 +43,9 @@ extern int _PyDict_ContainsId(PyObject *, _Py_Identifier *);
 extern int _PyDict_SetItemId(PyObject *dp, _Py_Identifier *key, PyObject *item);
 extern int _PyDict_DelItemId(PyObject *mp, _Py_Identifier *key);
 
+extern void _PyDict_ClearKeysVersionLockHeld(PyObject *mp);
+
+
 extern int _PyDict_Next(
     PyObject *mp, Py_ssize_t *pos, PyObject **key, PyObject **value, Py_hash_t *hash);
 
@@ -270,6 +273,13 @@ static inline PyDictUnicodeEntry* DK_UNICODE_ENTRIES(PyDictKeysObject *dk) {
 #define DICT_WATCHER_AND_MODIFICATION_MASK ((1 << (DICT_MAX_WATCHERS + DICT_WATCHED_MUTATION_BITS)) - 1)
 #define DICT_UNIQUE_ID_SHIFT (32)
 #define DICT_UNIQUE_ID_MAX ((UINT64_C(1) << (64 - DICT_UNIQUE_ID_SHIFT)) - 1)
+
+/* The first three dict watcher IDs are reserved for CPython,
+ * so we don't need to check that they haven't been used */
+#define BUILTINS_WATCHER_ID     0
+#define GLOBALS_WATCHER_ID      1
+#define MODULE_WATCHER_ID       2
+#define FIRST_AVAILABLE_WATCHER 3
 
 
 PyAPI_FUNC(void)
