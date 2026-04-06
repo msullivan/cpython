@@ -12,6 +12,7 @@ import tempfile
 import os
 
 from test import support
+from test.support.script_helper import assert_python_ok
 
 try:
     import _testcapi
