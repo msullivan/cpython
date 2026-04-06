@@ -151,6 +151,23 @@ Clean cherry-pick, no conflicts.
 
 Clean cherry-pick, no conflicts.
 
+### #146084 — Fix test names/comments for `sys.lazy_modules` dict
+
+Clean cherry-pick, no conflicts.
+
+### #146081 — Record lazy modules without submodules in `sys.lazy_modules`
+
+Clean cherry-pick, no conflicts. **However**, the new test
+`test_lazy_module_without_children_is_tracked` uses `assert_python_ok` without
+importing it. Added `from test.support.script_helper import assert_python_ok` in
+a follow-up fix commit. (Bug exists upstream too.)
+
+### #148111 — Resolve lazy import filter names for relative imports
+
+**Conflict:** `Python/clinic/sysmodule.c.h` — 3.14/3.15 divergence in
+clinic-generated code. **Resolution:** Regenerated with
+`make PYTHON_FOR_REGEN=python3 clinic`.
+
 ---
 
 ### `Python/specialize.c` — detailed notes
