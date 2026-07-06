@@ -713,17 +713,17 @@ codegen_setup_annotations_scope(compiler *c, location loc,
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
                             key, loc.lineno, NULL, &umd));
 
-    // if .format > VALUE_WITH_FAKE_GLOBALS: raise NotImplementedError
-    PyObject *value_with_fake_globals = PyLong_FromLong(_Py_ANNOTATE_FORMAT_VALUE_WITH_FAKE_GLOBALS);
-    if (value_with_fake_globals == NULL) {
+    // if .format != STRING: raise NotImplementedError
+    PyObject *string_format = PyLong_FromLong(_Py_ANNOTATE_FORMAT_STRING);
+    if (string_format == NULL) {
         return ERROR;
     }
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     _Py_DECLARE_STR(format, ".format");
     ADDOP_I(c, loc, LOAD_FAST, 0);
-    ADDOP_LOAD_CONST_NEW(c, loc, value_with_fake_globals);
-    ADDOP_I(c, loc, COMPARE_OP, (Py_GT << 5) | compare_masks[Py_GT]);
+    ADDOP_LOAD_CONST_NEW(c, loc, string_format);
+    ADDOP_I(c, loc, COMPARE_OP, (Py_NE << 5) | compare_masks[Py_NE]);
     NEW_JUMP_TARGET_LABEL(c, body);
     ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, body);
     ADDOP_I(c, loc, LOAD_COMMON_CONSTANT, CONSTANT_NOTIMPLEMENTEDERROR);
@@ -821,7 +821,8 @@ codegen_deferred_annotations_body(compiler *c, location loc,
             ADDOP_JUMP(c, LOC(st), POP_JUMP_IF_FALSE, not_set);
         }
 
-        VISIT(c, expr, st->v.AnnAssign.annotation);
+        //VISIT(c, expr, st->v.AnnAssign.annotation);
+        ADDOP_LOAD_CONST_NEW(c, LOC(st), _PyAST_ExprAsUnicode(st->v.AnnAssign.annotation));
         ADDOP_I(c, LOC(st), COPY, 2);
         ADDOP_LOAD_CONST_NEW(c, LOC(st), mangled);
         // stack now contains <annos> <name> <annos> <value>
@@ -1086,7 +1087,7 @@ codegen_argannotation(compiler *c, identifier id,
     ADDOP_LOAD_CONST(c, loc, mangled);
     Py_DECREF(mangled);
 
-    if (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
+    if (1 || FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
         VISIT(c, annexpr, annotation);
     }
     else {
