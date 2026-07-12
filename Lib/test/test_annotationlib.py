@@ -384,8 +384,7 @@ class TestStringFormat(unittest.TestCase):
             "y": "list[t'{a}']",
             "z": "t'{a:b} {c!r} {d!s:t}'",
             "a": "t'a{b}c{d}e{f}g'",
-            # interpolations in the format spec are eagerly evaluated so we can't recover the source
-            "b": "t'{a:1}'",
+            "b": "t'{a:{1}}'",
             "c": "t'{a | b * c}'",
             "gh138558": "t'{ 0}'",
         })
@@ -455,7 +454,7 @@ class TestStringFormat(unittest.TestCase):
             {
                 "a": "1",
                 "b": "1.0",
-                "c": 'hello',
+                "c": "'hello'",
                 "d": "b'hello'",
                 "e": "True",
                 "f": "None",
@@ -519,30 +518,33 @@ class TestStringFormat(unittest.TestCase):
             },
         )
 
-    def test_unsupported_operations(self):
-        format_msg = "Cannot stringify annotation containing string formatting"
-
+    def test_fstrings(self):
+        # Since __annotate__ returns the source of the annotations, f-strings
+        # can be stringified faithfully.
         def f(fstring: f"{a}"):
             pass
 
-        with self.assertRaisesRegex(TypeError, format_msg):
-            get_annotations(f, format=Format.STRING)
+        self.assertEqual(
+            get_annotations(f, format=Format.STRING), {"fstring": "f'{a}'"}
+        )
 
         def f(fstring_format: f"{a:02d}"):
             pass
 
-        with self.assertRaisesRegex(TypeError, format_msg):
-            get_annotations(f, format=Format.STRING)
+        self.assertEqual(
+            get_annotations(f, format=Format.STRING),
+            {"fstring_format": "f'{a:02d}'"},
+        )
 
     def test_shenanigans(self):
-        # In cases like this we can't reconstruct the source; test that we do something
-        # halfway reasonable.
+        # Since __annotate__ returns the source of the annotations, even
+        # annotations that perform runtime shenanigans stringify faithfully.
         def f(x: x | (1).__class__, y: (1).__class__):
             pass
 
         self.assertEqual(
             get_annotations(f, format=Format.STRING),
-            {"x": "x | <class 'int'>", "y": "<class 'int'>"},
+            {"x": "x | 1 .__class__", "y": "1 .__class__"},
         )
 
 
@@ -786,11 +788,11 @@ class TestGetAnnotations(unittest.TestCase):
         )
         self.assertEqual(
             get_annotations(isa.function2, format=Format.STRING),
-            {"a": "int", "b": "str", "c": "MyClass", "return": "MyClass"},
+            {"a": "int", "b": "'str'", "c": "MyClass", "return": "MyClass"},
         )
         self.assertEqual(
             get_annotations(isa.function3, format=Format.STRING),
-            {"a": "int", "b": "str", "c": "MyClass"},
+            {"a": "'int'", "b": "'str'", "c": "'MyClass'"},
         )
         self.assertEqual(
             get_annotations(annotationlib, format=Format.STRING),
@@ -1714,6 +1716,14 @@ class TestCallAnnotateFunction(unittest.TestCase):
                 annotationlib.call_annotate_function(annotate, format=fmt)
 
 
+def _call_annotate(cls):
+    # Compiler-generated __annotate__ functions do not support the VALUE
+    # format directly; go through annotationlib to evaluate the strings.
+    return annotationlib.call_annotate_function(
+        cls.__annotate__, Format.VALUE, owner=cls
+    )
+
+
 class MetaclassTests(unittest.TestCase):
     def test_annotated_meta(self):
         class Meta(type):
@@ -1726,13 +1736,13 @@ class MetaclassTests(unittest.TestCase):
             b: float
 
         self.assertEqual(get_annotations(Meta), {"a": int})
-        self.assertEqual(Meta.__annotate__(Format.VALUE), {"a": int})
+        self.assertEqual(_call_annotate(Meta), {"a": int})
 
         self.assertEqual(get_annotations(X), {})
         self.assertIs(X.__annotate__, None)
 
         self.assertEqual(get_annotations(Y), {"b": float})
-        self.assertEqual(Y.__annotate__(Format.VALUE), {"b": float})
+        self.assertEqual(_call_annotate(Y), {"b": float})
 
     def test_unannotated_meta(self):
         class Meta(type):
@@ -1751,7 +1761,7 @@ class MetaclassTests(unittest.TestCase):
         self.assertIs(Y.__annotate__, None)
 
         self.assertEqual(get_annotations(X), {"a": str})
-        self.assertEqual(X.__annotate__(Format.VALUE), {"a": str})
+        self.assertEqual(_call_annotate(X), {"a": str})
 
     def test_ordering(self):
         # Based on a sample by David Ellis
@@ -1792,7 +1802,7 @@ class MetaclassTests(unittest.TestCase):
                         annotate_func = getattr(c, "__annotate__", None)
                         if c.expected_annotations:
                             self.assertEqual(
-                                annotate_func(Format.VALUE), c.expected_annotations
+                                _call_annotate(c), c.expected_annotations
                             )
                         else:
                             self.assertIs(annotate_func, None)

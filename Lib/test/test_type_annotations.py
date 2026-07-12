@@ -399,10 +399,13 @@ class DeferredEvaluationTests(unittest.TestCase):
             anno(3)
 
         with self.assertRaises(NameError):
-            anno(1)
+            annotationlib.call_annotate_function(anno, annotationlib.Format.VALUE)
 
         ns["undefined"] = 1
-        self.assertEqual(anno(1), {"x": 1})
+        self.assertEqual(
+            annotationlib.call_annotate_function(anno, annotationlib.Format.VALUE),
+            {"x": 1},
+        )
 
     def test_class_scoping(self):
         class Outer:
@@ -470,10 +473,18 @@ class DeferredEvaluationTests(unittest.TestCase):
                 with self.assertRaises(NotImplementedError):
                     annotate(annotationlib.Format.FORWARDREF)
                 with self.assertRaises(NotImplementedError):
-                    annotate(annotationlib.Format.STRING)
-                with self.assertRaises(TypeError):
+                    annotate(annotationlib.Format.VALUE)
+                with self.assertRaises(NotImplementedError):
                     annotate(None)
-                self.assertEqual(annotate(annotationlib.Format.VALUE), {"x": int})
+                self.assertEqual(
+                    annotate(annotationlib.Format.STRING), {"x": "int"}
+                )
+                self.assertEqual(
+                    annotationlib.call_annotate_function(
+                        annotate, annotationlib.Format.VALUE
+                    ),
+                    {"x": int},
+                )
 
                 sig = inspect.signature(annotate)
                 self.assertEqual(sig, inspect.Signature([
@@ -483,7 +494,12 @@ class DeferredEvaluationTests(unittest.TestCase):
     def test_comprehension_in_annotation(self):
         # This crashed in an earlier version of the code
         ns = run_code("x: [y for y in range(10)]")
-        self.assertEqual(ns["__annotate__"](1), {"x": list(range(10))})
+        self.assertEqual(
+            annotationlib.call_annotate_function(
+                ns["__annotate__"], annotationlib.Format.VALUE
+            ),
+            {"x": list(range(10))},
+        )
 
     def test_class_annotation_dunder_classdict(self):
         ns = run_code("""
@@ -599,8 +615,12 @@ class ConditionalAnnotationTests(unittest.TestCase):
                     if scope == "class":
                         self.assertEqual(ns["Cls"].__annotations__, expected)
                     else:
-                        self.assertEqual(ns["__annotate__"](annotationlib.Format.VALUE),
-                                         expected)
+                        self.assertEqual(
+                            annotationlib.call_annotate_function(
+                                ns["__annotate__"], annotationlib.Format.VALUE
+                            ),
+                            expected,
+                        )
 
     def test_with(self):
         code = """
