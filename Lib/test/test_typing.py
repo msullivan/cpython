@@ -8372,7 +8372,7 @@ class NamedTupleTests(BaseTestCase):
         self.assertEqual(Z.__annotations__, annos)
         self.assertEqual(Z.__annotate__(annotationlib.Format.VALUE), annos)
         self.assertEqual(Z.__annotate__(annotationlib.Format.FORWARDREF), annos)
-        self.assertEqual(Z.__annotate__(annotationlib.Format.STRING), {"a": "None", "b": "str"})
+        self.assertEqual(Z.__annotate__(annotationlib.Format.STRING), {"a": "None", "b": "'str'"})
 
     def test_future_annotations(self):
         code = """
