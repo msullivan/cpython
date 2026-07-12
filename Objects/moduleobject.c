@@ -1720,8 +1720,7 @@ module_get_annotations(PyObject *self, void *Py_UNUSED(ignored))
             return NULL;
         }
         if (annotate_result == 1 && PyCallable_Check(annotate)) {
-            PyObject *one = _PyLong_GetOne();
-            annotations = _PyObject_CallOneArg(annotate, one);
+            annotations = _PyObject_CallAnnotateForValue(annotate, self);
             if (annotations == NULL) {
                 Py_DECREF(annotate);
                 Py_DECREF(dict);

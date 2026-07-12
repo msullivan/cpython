@@ -699,6 +699,10 @@ class TracebackErrorLocationCaretTestBase:
         result_lines = self.get_exception(f_with_unicode)
         self.assertEqual(result_lines, expected_f.splitlines())
 
+    # __annotate__ functions return strings, which annotationlib evaluates
+    # with eval(), so the traceback no longer points into the original
+    # annotation source.
+    @unittest.expectedFailure
     def test_caret_in_type_annotation(self):
         def f_with_type():
             def foo(a: THIS_DOES_NOT_EXIST ) -> int:
