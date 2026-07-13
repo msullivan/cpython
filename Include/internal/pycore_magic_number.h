@@ -313,7 +313,6 @@ Known values:
 */
 
 #define PYC_MAGIC_NUMBER 3705
- __annotate__)
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \

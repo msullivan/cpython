@@ -707,8 +707,35 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
 }
 
 static int
+codegen_compare_format(compiler *c, location loc, int compare_op, long format)
+{
+    // Emit: .format <compare_op> <format>
+    PyObject *format_const = PyLong_FromLong(format);
+    if (format_const == NULL) {
+        return ERROR;
+    }
+    ADDOP_I(c, loc, LOAD_FAST, 0);
+    ADDOP_LOAD_CONST_NEW(c, loc, format_const);
+    ADDOP_I(c, loc, COMPARE_OP, (compare_op << 5) | compare_masks[compare_op]);
+    return SUCCESS;
+}
+
+// Enter an annotation scope and emit the format-checking prologue.
+// *value_expr* must be NULL for __annotate__ scopes, whose bodies produce
+// annotation strings, and non-NULL for evaluate function scopes (type alias
+// values, type param bounds and defaults), whose bodies compute real values.
+//
+// For __annotate__ functions:
+//     if .format != STRING: raise NotImplementedError
+// For __annotate__ functions under "from __future__ import annotations",
+// which return strings for the VALUE format too (PEP 563 semantics):
+//     if .format != VALUE and .format != STRING: raise NotImplementedError
+// For evaluate functions:
+//     if .format == STRING: return "<unparsed source of value_expr>"
+//     if .format != VALUE: raise NotImplementedError
+static int
 codegen_setup_annotations_scope(compiler *c, location loc,
-                                void *key, PyObject *name, int is_annotate)
+                                void *key, PyObject *name, expr_ty value_expr)
 {
     _PyCompile_CodeUnitMetadata umd = {
         .u_posonlyargcount = 1,
@@ -717,29 +744,37 @@ codegen_setup_annotations_scope(compiler *c, location loc,
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
                             key, loc.lineno, NULL, &umd));
 
-    // For __annotate__ functions, which return strings:
-    //     if .format != STRING: raise NotImplementedError
-    // For evaluate functions (type alias values, type param bounds and
-    // defaults), which compute real values, and for __annotate__ functions
-    // under "from __future__ import annotations", which return strings for
-    // the VALUE format (PEP 563 semantics):
-    //     if .format > VALUE_WITH_FAKE_GLOBALS: raise NotImplementedError
-    int string_only =
-        is_annotate && !(FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS);
-    PyObject *format_bound = PyLong_FromLong(
-        string_only ? _Py_ANNOTATE_FORMAT_STRING
-                    : _Py_ANNOTATE_FORMAT_VALUE_WITH_FAKE_GLOBALS);
-    if (format_bound == NULL) {
-        return ERROR;
-    }
-    int compare_op = string_only ? Py_NE : Py_GT;
-
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     _Py_DECLARE_STR(format, ".format");
-    ADDOP_I(c, loc, LOAD_FAST, 0);
-    ADDOP_LOAD_CONST_NEW(c, loc, format_bound);
-    ADDOP_I(c, loc, COMPARE_OP, (compare_op << 5) | compare_masks[compare_op]);
     NEW_JUMP_TARGET_LABEL(c, body);
+
+    if (value_expr != NULL) {
+        // if .format == STRING: return "<source>"
+        NEW_JUMP_TARGET_LABEL(c, not_string);
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
+                                               _Py_ANNOTATE_FORMAT_STRING));
+        ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, not_string);
+        ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(value_expr));
+        ADDOP(c, loc, RETURN_VALUE);
+        USE_LABEL(c, not_string);
+        // if .format != VALUE: raise NotImplementedError
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
+                                               _Py_ANNOTATE_FORMAT_VALUE));
+    }
+    else if (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
+        // if .format == VALUE: goto body
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
+                                               _Py_ANNOTATE_FORMAT_VALUE));
+        ADDOP_JUMP(c, loc, POP_JUMP_IF_TRUE, body);
+        // if .format != STRING: raise NotImplementedError
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
+                                               _Py_ANNOTATE_FORMAT_STRING));
+    }
+    else {
+        // if .format != STRING: raise NotImplementedError
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
+                                               _Py_ANNOTATE_FORMAT_STRING));
+    }
     ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, body);
     ADDOP_I(c, loc, LOAD_COMMON_CONSTANT, CONSTANT_NOTIMPLEMENTEDERROR);
     ADDOP_I(c, loc, RAISE_VARARGS, 1);
@@ -884,7 +919,7 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     void *key = (void *)((uintptr_t)ste->ste_id + 1);
     if (codegen_setup_annotations_scope(c, loc, key,
-                                        ste->ste_annotation_block->ste_name, 1) < 0) {
+                                        ste->ste_annotation_block->ste_name, NULL) < 0) {
         goto error;
     }
     if (codegen_deferred_annotations_body(c, loc, deferred_anno,
@@ -1195,7 +1230,7 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, 1);
+        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, NULL);
         Py_DECREF(ste);
         RETURN_IF_ERROR(err);
         RETURN_IF_ERROR_IN_SCOPE(
@@ -1278,7 +1313,7 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
 {
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, 0));
+    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, e));
     if (allow_starred && e->kind == Starred_kind) {
         VISIT_IN_SCOPE(c, expr, e->v.Starred.value);
         ADDOP_I_IN_SCOPE(c, LOC(e), UNPACK_SEQUENCE, (Py_ssize_t)1);
@@ -1787,7 +1822,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, loc, defaults);
     RETURN_IF_ERROR(
-        codegen_setup_annotations_scope(c, LOC(s), s, name, 0));
+        codegen_setup_annotations_scope(c, LOC(s), s, name,
+                                        s->v.TypeAlias.value));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     VISIT_IN_SCOPE(c, expr, s->v.TypeAlias.value);
