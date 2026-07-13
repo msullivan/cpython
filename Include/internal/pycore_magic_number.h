@@ -300,6 +300,7 @@ Known values:
     Python 3.16a0 3700 (Initial version)
     Python 3.16a0 3701 (Add CONSTANT_EMPTY_TUPLE to LOAD_COMMON_CONSTANT)
     Python 3.16a0 3702 (__annotate__ functions support only the STRING format)
+    Python 3.16a0 3703 (evaluate functions support STRING natively; drop VALUE_WITH_FAKE_GLOBALS)
 
 
     Python 3.17 will start with 3750
@@ -313,7 +314,7 @@ PC/launcher.c must also be updated.
 
 */
 
-#define PYC_MAGIC_NUMBER 3702
+#define PYC_MAGIC_NUMBER 3703
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \
