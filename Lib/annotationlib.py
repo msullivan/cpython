@@ -721,135 +721,24 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
     except NotImplementedError:
         pass
     if format == Format.STRING:
-        # STRING is implemented by calling the annotate function in a special
-        # environment where every name lookup results in an instance of _Stringifier.
-        # _Stringifier supports every dunder operation and returns a new _Stringifier.
-        # At the end, we get a dictionary that mostly contains _Stringifier objects (or
-        # possibly constants if the annotate function uses them directly). We then
-        # convert each of those into a string to get an approximation of the
-        # original source.
-
-        # Attempt to call with VALUE_WITH_FAKE_GLOBALS to check if it is implemented
-        # See: https://github.com/python/cpython/issues/138764
-        # Only fail on NotImplementedError
-        try:
-            annotate(Format.VALUE_WITH_FAKE_GLOBALS)
-        except NotImplementedError:
-            # Both STRING and VALUE_WITH_FAKE_GLOBALS are not implemented: fallback to VALUE
-            return annotations_to_string(annotate(Format.VALUE))
-        except Exception:
-            pass
-
-        globals = _StringifierDict({}, format=format)
-        is_class = isinstance(owner, type)
-        closure, _ = _build_closure(
-            annotate, owner, is_class, globals, allow_evaluation=False
-        )
-        func = types.FunctionType(
-            annotate.__code__,
-            globals,
-            closure=closure,
-            argdefs=annotate.__defaults__,
-            kwdefaults=annotate.__kwdefaults__,
-        )
-        annos = func(Format.VALUE_WITH_FAKE_GLOBALS)
+        # The annotate function does not support the STRING format natively
+        # (e.g., a manually written annotate function that supports only
+        # VALUE). Fall back to converting the values to strings.
+        result = annotate(Format.VALUE)
         if _is_evaluate:
-            return _stringify_single(annos)
-        return {
-            key: _stringify_single(val)
-            for key, val in annos.items()
-        }
+            return _stringify_single(result)
+        return annotations_to_string(result)
     elif format == Format.FORWARDREF:
-        # FORWARDREF is implemented similarly to STRING, but there are two changes,
-        # at the beginning and the end of the process.
-        # First, while STRING uses an empty dictionary as the namespace, so that all
-        # name lookups result in _Stringifier objects, FORWARDREF uses the globals
-        # and builtins, so that defined names map to their real values.
-        # Second, instead of returning strings, we want to return either real values
-        # or ForwardRef objects. To do this, we keep track of all _Stringifier objects
-        # created while the annotation is being evaluated, and at the end we convert
-        # them all to ForwardRef objects by assigning to __class__. To make this
-        # technique work, we have to ensure that the _Stringifier and ForwardRef
-        # classes share the same attributes.
-        # We use this technique because while the annotations are being evaluated,
-        # we want to support all operations that the language allows, including even
-        # __getattr__ and __eq__, and return new _Stringifier objects so we can accurately
-        # reconstruct the source. But in the dictionary that we eventually return, we
-        # want to return objects with more user-friendly behavior, such as an __eq__
-        # that returns a bool and an defined set of attributes.
-        namespace = {**annotate.__builtins__, **annotate.__globals__}
-        is_class = isinstance(owner, type)
-        globals = _StringifierDict(
-            namespace,
-            globals=annotate.__globals__,
-            owner=owner,
-            is_class=is_class,
-            format=format,
-        )
-        closure, cell_dict = _build_closure(
-            annotate, owner, is_class, globals, allow_evaluation=True
-        )
-        func = types.FunctionType(
-            annotate.__code__,
-            globals,
-            closure=closure,
-            argdefs=annotate.__defaults__,
-            kwdefaults=annotate.__kwdefaults__,
-        )
+        # If the annotate function supports the STRING format (as
+        # compiler-generated annotate and evaluate functions do), evaluate
+        # the strings it returns, turning unresolvable names into
+        # ForwardRefs; otherwise fall back to VALUE.
         try:
-            result = func(Format.VALUE_WITH_FAKE_GLOBALS)
+            return _eval_string_annotate(
+                annotate, Format.FORWARDREF, owner, _is_evaluate
+            )
         except NotImplementedError:
-            # FORWARDREF and VALUE_WITH_FAKE_GLOBALS are not supported.
-            # If the annotate function supports the STRING format (as
-            # compiler-generated annotate functions do), evaluate the
-            # strings it returns; otherwise fall back to VALUE.
-            try:
-                return _eval_string_annotate(
-                    annotate, Format.FORWARDREF, owner, _is_evaluate
-                )
-            except NotImplementedError:
-                return annotate(Format.VALUE)
-        except Exception:
-            pass
-        else:
-            globals.transmogrify(cell_dict)
-            return result
-
-        # Try again, but do not provide any globals. This allows us to return
-        # a value in certain cases where an exception gets raised during evaluation.
-        globals = _StringifierDict(
-            {},
-            globals=annotate.__globals__,
-            owner=owner,
-            is_class=is_class,
-            format=format,
-        )
-        closure, cell_dict = _build_closure(
-            annotate, owner, is_class, globals, allow_evaluation=False
-        )
-        func = types.FunctionType(
-            annotate.__code__,
-            globals,
-            closure=closure,
-            argdefs=annotate.__defaults__,
-            kwdefaults=annotate.__kwdefaults__,
-        )
-        result = func(Format.VALUE_WITH_FAKE_GLOBALS)
-        globals.transmogrify(cell_dict)
-        if _is_evaluate:
-            if isinstance(result, ForwardRef):
-                return result.evaluate(format=Format.FORWARDREF)
-            else:
-                return result
-        else:
-            return {
-                key: (
-                    val.evaluate(format=Format.FORWARDREF)
-                    if isinstance(val, ForwardRef)
-                    else val
-                )
-                for key, val in result.items()
-            }
+            return annotate(Format.VALUE)
     elif format == Format.VALUE:
         # Compiler-generated __annotate__ functions do not support the VALUE
         # format directly; they only return strings (the STRING format).
@@ -863,36 +752,6 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
             ) from None
     else:
         raise ValueError(f"Invalid format: {format!r}")
-
-
-def _build_closure(annotate, owner, is_class, stringifier_dict, *, allow_evaluation):
-    if not annotate.__closure__:
-        return None, None
-    new_closure = []
-    cell_dict = {}
-    for name, cell in zip(annotate.__code__.co_freevars, annotate.__closure__, strict=True):
-        cell_dict[name] = cell
-        new_cell = None
-        if allow_evaluation:
-            try:
-                cell.cell_contents
-            except ValueError:
-                pass
-            else:
-                new_cell = cell
-        if new_cell is None:
-            fwdref = _Stringifier(
-                name,
-                cell=cell,
-                owner=owner,
-                globals=annotate.__globals__,
-                is_class=is_class,
-                stringifier_dict=stringifier_dict,
-            )
-            stringifier_dict.stringifiers.append(fwdref)
-            new_cell = types.CellType(fwdref)
-        new_closure.append(new_cell)
-    return tuple(new_closure), cell_dict
 
 
 class _UnboundNamesDict(dict):
