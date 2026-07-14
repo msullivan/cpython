@@ -3460,46 +3460,6 @@ _Py_GetConstant_Init(void)
 #endif
 }
 
-PyObject *
-_PyObject_CallAnnotateForValue(PyObject *annotate, PyObject *owner)
-{
-    PyObject *one = _PyLong_GetOne();
-    PyObject *ann = _PyObject_CallOneArg(annotate, one);
-    if (ann != NULL || !PyErr_ExceptionMatches(PyExc_NotImplementedError)) {
-        return ann;
-    }
-    // The annotate function does not support the VALUE format. Fall back
-    // to annotationlib.call_annotate_function(), which knows how to
-    // evaluate the STRING format output to real values.
-    PyErr_Clear();
-    PyObject *func = PyImport_ImportModuleAttrString(
-        "annotationlib", "call_annotate_function");
-    if (func == NULL) {
-        return NULL;
-    }
-    PyObject *args = PyTuple_Pack(2, annotate, one);
-    if (args == NULL) {
-        Py_DECREF(func);
-        return NULL;
-    }
-    PyObject *kwargs = NULL;
-    if (owner != NULL) {
-        kwargs = PyDict_New();
-        if (kwargs == NULL
-            || PyDict_SetItemString(kwargs, "owner", owner) < 0) {
-            Py_XDECREF(kwargs);
-            Py_DECREF(args);
-            Py_DECREF(func);
-            return NULL;
-        }
-    }
-    ann = PyObject_Call(func, args, kwargs);
-    Py_XDECREF(kwargs);
-    Py_DECREF(args);
-    Py_DECREF(func);
-    return ann;
-}
-
 PyObject*
 Py_GetConstant(unsigned int constant_id)
 {

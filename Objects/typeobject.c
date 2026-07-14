@@ -2200,8 +2200,8 @@ type_get_annotations(PyObject *tp, void *Py_UNUSED(closure))
             return NULL;
         }
         if (PyCallable_Check(annotate)) {
-            annotations = _PyObject_CallAnnotateForValue(annotate,
-                                                         (PyObject *)type);
+            PyObject *one = _PyLong_GetOne();
+            annotations = _PyObject_CallOneArg(annotate, one);
             if (annotations == NULL) {
                 Py_DECREF(dict);
                 Py_DECREF(annotate);

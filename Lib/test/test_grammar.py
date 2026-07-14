@@ -424,12 +424,7 @@ class GrammarTests(unittest.TestCase):
         self.assertNotIn('__annotate__', gns)
 
         gns.update(lns)  # __annotate__ looks at globals
-        self.assertEqual(
-            annotationlib.call_annotate_function(
-                lns["__annotate__"], annotationlib.Format.VALUE
-            ),
-            {'x': int},
-        )
+        self.assertEqual(lns["__annotate__"](annotationlib.Format.VALUE), {'x': int})
 
     def test_var_annot_rhs(self):
         ns = {}

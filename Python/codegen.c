@@ -721,7 +721,11 @@ codegen_compare_format(compiler *c, location loc, int compare_op, long format)
 // annotation strings, and non-NULL for evaluate function scopes (type alias
 // values, type param bounds and defaults), whose bodies compute real values.
 //
-// For __annotate__ functions:
+// For __annotate__ functions, whose bodies produce strings, the VALUE
+// format is implemented by handing the function itself to annotationlib,
+// which evaluates the strings using the function's globals and closure:
+//     if .format == VALUE:
+//         return annotationlib._annotate_value(<current function>)
 //     if .format != STRING: raise NotImplementedError
 // For __annotate__ functions under "from __future__ import annotations",
 // which return strings for the VALUE format too (PEP 563 semantics):
@@ -757,16 +761,28 @@ codegen_setup_annotations_scope(compiler *c, location loc,
         RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
                                                _Py_ANNOTATE_FORMAT_VALUE));
     }
-    else if (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
-        // if .format == VALUE: goto body
+    else if (!(FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)) {
+        // if .format == VALUE:
+        //     return annotationlib._annotate_value(<this function>)
+        NEW_JUMP_TARGET_LABEL(c, not_value);
         RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
                                                _Py_ANNOTATE_FORMAT_VALUE));
-        ADDOP_JUMP(c, loc, POP_JUMP_IF_TRUE, body);
+        ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, not_value);
+        ADDOP(c, loc, LOAD_CURRENT_FUNC);
+        ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_ANNOTATE_VALUE);
+        ADDOP(c, loc, RETURN_VALUE);
+        USE_LABEL(c, not_value);
         // if .format != STRING: raise NotImplementedError
         RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
                                                _Py_ANNOTATE_FORMAT_STRING));
     }
     else {
+        // Under "from __future__ import annotations", the body returns
+        // strings for the VALUE format too (PEP 563 semantics).
+        // if .format == VALUE: goto body
+        RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
+                                               _Py_ANNOTATE_FORMAT_VALUE));
+        ADDOP_JUMP(c, loc, POP_JUMP_IF_TRUE, body);
         // if .format != STRING: raise NotImplementedError
         RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
                                                _Py_ANNOTATE_FORMAT_STRING));

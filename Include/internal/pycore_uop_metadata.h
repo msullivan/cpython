@@ -205,6 +205,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_DEREF] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_DEREF] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ESCAPES_FLAG,
     [_COPY_FREE_VARS] = HAS_ARG_FLAG,
+    [_LOAD_CURRENT_FUNC] = 0,
     [_BUILD_STRING] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_BUILD_INTERPOLATION] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_BUILD_TEMPLATE] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -1976,6 +1977,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 1, 1, _COPY_FREE_VARS_r11 },
             { 2, 2, _COPY_FREE_VARS_r22 },
             { 3, 3, _COPY_FREE_VARS_r33 },
+        },
+    },
+    [_LOAD_CURRENT_FUNC] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 1, 0, _LOAD_CURRENT_FUNC_r01 },
+            { 2, 1, _LOAD_CURRENT_FUNC_r12 },
+            { 3, 2, _LOAD_CURRENT_FUNC_r23 },
+            { -1, -1, -1 },
         },
     },
     [_BUILD_STRING] = {
@@ -4354,6 +4364,9 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_COPY_FREE_VARS_r11] = _COPY_FREE_VARS,
     [_COPY_FREE_VARS_r22] = _COPY_FREE_VARS,
     [_COPY_FREE_VARS_r33] = _COPY_FREE_VARS,
+    [_LOAD_CURRENT_FUNC_r01] = _LOAD_CURRENT_FUNC,
+    [_LOAD_CURRENT_FUNC_r12] = _LOAD_CURRENT_FUNC,
+    [_LOAD_CURRENT_FUNC_r23] = _LOAD_CURRENT_FUNC,
     [_BUILD_STRING_r01] = _BUILD_STRING,
     [_BUILD_INTERPOLATION_r01] = _BUILD_INTERPOLATION,
     [_BUILD_TEMPLATE_r21] = _BUILD_TEMPLATE,
@@ -5765,6 +5778,10 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_LOAD_CONST_INLINE_BORROW_r01] = "_LOAD_CONST_INLINE_BORROW_r01",
     [_LOAD_CONST_INLINE_BORROW_r12] = "_LOAD_CONST_INLINE_BORROW_r12",
     [_LOAD_CONST_INLINE_BORROW_r23] = "_LOAD_CONST_INLINE_BORROW_r23",
+    [_LOAD_CURRENT_FUNC] = "_LOAD_CURRENT_FUNC",
+    [_LOAD_CURRENT_FUNC_r01] = "_LOAD_CURRENT_FUNC_r01",
+    [_LOAD_CURRENT_FUNC_r12] = "_LOAD_CURRENT_FUNC_r12",
+    [_LOAD_CURRENT_FUNC_r23] = "_LOAD_CURRENT_FUNC_r23",
     [_LOAD_DEREF] = "_LOAD_DEREF",
     [_LOAD_DEREF_r01] = "_LOAD_DEREF_r01",
     [_LOAD_FAST] = "_LOAD_FAST",
@@ -6544,6 +6561,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _STORE_DEREF:
             return 1;
         case _COPY_FREE_VARS:
+            return 0;
+        case _LOAD_CURRENT_FUNC:
             return 0;
         case _BUILD_STRING:
             return oparg;

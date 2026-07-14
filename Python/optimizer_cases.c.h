@@ -2382,6 +2382,16 @@
             break;
         }
 
+        case _LOAD_CURRENT_FUNC: {
+            JitOptRef func;
+            func = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = func;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _BUILD_STRING: {
             JitOptRef str;
             str = sym_new_type(ctx, &PyUnicode_Type);
