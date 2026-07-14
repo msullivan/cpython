@@ -703,8 +703,47 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
 }
 
 static int
+codegen_compare_format(compiler *c, location loc, int compare_op, long format)
+{
+    // Emit: .format <compare_op> <format>
+    PyObject *format_const = PyLong_FromLong(format);
+    if (format_const == NULL) {
+        return ERROR;
+    }
+    ADDOP_I(c, loc, LOAD_FAST, 0);
+    ADDOP_LOAD_CONST_NEW(c, loc, format_const);
+    ADDOP_I(c, loc, COMPARE_OP, (compare_op << 5) | compare_masks[compare_op]);
+    return SUCCESS;
+}
+
+// Emit `if .format != STRING: goto value_body`. The caller emits the
+// STRING body (ending it with RETURN_VALUE), then USE_LABEL(c, value_body)
+// and the VALUE body.
+static int
+codegen_annotations_string_dispatch(compiler *c, location loc,
+                                    jump_target_label value_body)
+{
+    RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
+                                           _Py_ANNOTATE_FORMAT_STRING));
+    ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, value_body);
+    return SUCCESS;
+}
+
+// Enter an annotation scope and emit the format-checking prologue.
+//
+// Compiler-generated annotate and evaluate functions support the VALUE and
+// STRING formats and raise NotImplementedError for everything else:
+//     if .format != VALUE and .format != STRING: raise NotImplementedError
+//
+// *value_expr* must be non-NULL for evaluate function scopes (type alias
+// values, type param bounds and defaults). Their STRING implementation
+// (return the unparsed source of the expression) is emitted here, so the
+// caller only emits the VALUE body. For __annotate__ scopes (value_expr is
+// NULL), the caller emits both bodies, dispatching on the format with
+// codegen_annotations_string_dispatch().
+static int
 codegen_setup_annotations_scope(compiler *c, location loc,
-                                void *key, PyObject *name)
+                                void *key, PyObject *name, expr_ty value_expr)
 {
     _PyCompile_CodeUnitMetadata umd = {
         .u_posonlyargcount = 1,
@@ -713,22 +752,30 @@ codegen_setup_annotations_scope(compiler *c, location loc,
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
                             key, loc.lineno, NULL, &umd));
 
-    // if .format != STRING: raise NotImplementedError
-    PyObject *string_format = PyLong_FromLong(_Py_ANNOTATE_FORMAT_STRING);
-    if (string_format == NULL) {
-        return ERROR;
-    }
-
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     _Py_DECLARE_STR(format, ".format");
-    ADDOP_I(c, loc, LOAD_FAST, 0);
-    ADDOP_LOAD_CONST_NEW(c, loc, string_format);
-    ADDOP_I(c, loc, COMPARE_OP, (Py_NE << 5) | compare_masks[Py_NE]);
     NEW_JUMP_TARGET_LABEL(c, body);
+
+    // if .format == VALUE: goto body
+    RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_EQ,
+                                           _Py_ANNOTATE_FORMAT_VALUE));
+    ADDOP_JUMP(c, loc, POP_JUMP_IF_TRUE, body);
+    // if .format != STRING: raise NotImplementedError
+    RETURN_IF_ERROR(codegen_compare_format(c, loc, Py_NE,
+                                           _Py_ANNOTATE_FORMAT_STRING));
     ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, body);
     ADDOP_I(c, loc, LOAD_COMMON_CONSTANT, CONSTANT_NOTIMPLEMENTEDERROR);
     ADDOP_I(c, loc, RAISE_VARARGS, 1);
+
     USE_LABEL(c, body);
+    if (value_expr != NULL) {
+        // if .format == STRING: return "<source>"
+        NEW_JUMP_TARGET_LABEL(c, value_body);
+        RETURN_IF_ERROR(codegen_annotations_string_dispatch(c, loc, value_body));
+        ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(value_expr));
+        ADDOP(c, loc, RETURN_VALUE);
+        USE_LABEL(c, value_body);
+    }
     return SUCCESS;
 }
 
@@ -779,7 +826,8 @@ codegen_leave_annotations_scope(compiler *c, location loc)
 
 static int
 codegen_deferred_annotations_body(compiler *c, location loc,
-    PyObject *deferred_anno, PyObject *conditional_annotation_indices, int scope_type)
+    PyObject *deferred_anno, PyObject *conditional_annotation_indices,
+    int scope_type, int as_string)
 {
     Py_ssize_t annotations_len = PyList_GET_SIZE(deferred_anno);
 
@@ -821,8 +869,13 @@ codegen_deferred_annotations_body(compiler *c, location loc,
             ADDOP_JUMP(c, LOC(st), POP_JUMP_IF_FALSE, not_set);
         }
 
-        //VISIT(c, expr, st->v.AnnAssign.annotation);
-        ADDOP_LOAD_CONST_NEW(c, LOC(st), _PyAST_ExprAsUnicode(st->v.AnnAssign.annotation));
+        if (as_string) {
+            ADDOP_LOAD_CONST_NEW(c, LOC(st),
+                                 _PyAST_ExprAsUnicode(st->v.AnnAssign.annotation));
+        }
+        else {
+            VISIT(c, expr, st->v.AnnAssign.annotation);
+        }
         ADDOP_I(c, LOC(st), COPY, 2);
         ADDOP_LOAD_CONST_NEW(c, LOC(st), mangled);
         // stack now contains <annos> <name> <annos> <value>
@@ -831,6 +884,24 @@ codegen_deferred_annotations_body(compiler *c, location loc,
 
         USE_LABEL(c, not_set);
     }
+    return SUCCESS;
+}
+
+// Emit the __annotate__ body twice: string constants for the STRING
+// format, the annotation expressions for the VALUE format.
+static int
+codegen_deferred_annotations_bodies(compiler *c, location loc,
+    PyObject *deferred_anno, PyObject *conditional_annotation_indices,
+    int scope_type)
+{
+    NEW_JUMP_TARGET_LABEL(c, value_body);
+    RETURN_IF_ERROR(codegen_annotations_string_dispatch(c, loc, value_body));
+    RETURN_IF_ERROR(codegen_deferred_annotations_body(
+        c, loc, deferred_anno, conditional_annotation_indices, scope_type, 1));
+    ADDOP(c, loc, RETURN_VALUE);
+    USE_LABEL(c, value_body);
+    RETURN_IF_ERROR(codegen_deferred_annotations_body(
+        c, loc, deferred_anno, conditional_annotation_indices, scope_type, 0));
     return SUCCESS;
 }
 
@@ -862,11 +933,13 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     void *key = (void *)((uintptr_t)ste->ste_id + 1);
     if (codegen_setup_annotations_scope(c, loc, key,
-                                        ste->ste_annotation_block->ste_name) < 0) {
+                                        ste->ste_annotation_block->ste_name,
+                                        NULL) < 0) {
         goto error;
     }
-    if (codegen_deferred_annotations_body(c, loc, deferred_anno,
-                                          conditional_annotation_indices, scope_type) < 0) {
+    if (codegen_deferred_annotations_bodies(c, loc, deferred_anno,
+                                            conditional_annotation_indices,
+                                            scope_type) < 0) {
         _PyCompile_ExitScope(c);
         goto error;
     }
@@ -1075,7 +1148,8 @@ codegen_visit_annexpr(compiler *c, expr_ty annotation)
 
 static int
 codegen_argannotation(compiler *c, identifier id,
-    expr_ty annotation, Py_ssize_t *annotations_len, location loc)
+    expr_ty annotation, Py_ssize_t *annotations_len, location loc,
+    int as_string)
 {
     if (!annotation) {
         return SUCCESS;
@@ -1087,7 +1161,7 @@ codegen_argannotation(compiler *c, identifier id,
     ADDOP_LOAD_CONST(c, loc, mangled);
     Py_DECREF(mangled);
 
-    if (1 || FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
+    if (as_string) {
         VISIT(c, annexpr, annotation);
     }
     else {
@@ -1109,7 +1183,8 @@ codegen_argannotation(compiler *c, identifier id,
 
 static int
 codegen_argannotations(compiler *c, asdl_arg_seq* args,
-                       Py_ssize_t *annotations_len, location loc)
+                       Py_ssize_t *annotations_len, location loc,
+                       int as_string)
 {
     int i;
     for (i = 0; i < asdl_seq_LEN(args); i++) {
@@ -1120,7 +1195,8 @@ codegen_argannotations(compiler *c, asdl_arg_seq* args,
                         arg->arg,
                         arg->annotation,
                         annotations_len,
-                        loc));
+                        loc,
+                        as_string));
     }
     return SUCCESS;
 }
@@ -1128,31 +1204,37 @@ codegen_argannotations(compiler *c, asdl_arg_seq* args,
 static int
 codegen_annotations_in_scope(compiler *c, location loc,
                              arguments_ty args, expr_ty returns,
-                             Py_ssize_t *annotations_len)
+                             Py_ssize_t *annotations_len, int as_string)
 {
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->posonlyargs, annotations_len, loc));
+        codegen_argannotations(c, args->posonlyargs, annotations_len, loc,
+                               as_string));
 
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->args, annotations_len, loc));
+        codegen_argannotations(c, args->args, annotations_len, loc,
+                               as_string));
 
     if (args->vararg && args->vararg->annotation) {
         RETURN_IF_ERROR(
             codegen_argannotation(c, args->vararg->arg,
-                                     args->vararg->annotation, annotations_len, loc));
+                                     args->vararg->annotation, annotations_len,
+                                     loc, as_string));
     }
 
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->kwonlyargs, annotations_len, loc));
+        codegen_argannotations(c, args->kwonlyargs, annotations_len, loc,
+                               as_string));
 
     if (args->kwarg && args->kwarg->annotation) {
         RETURN_IF_ERROR(
             codegen_argannotation(c, args->kwarg->arg,
-                                     args->kwarg->annotation, annotations_len, loc));
+                                     args->kwarg->annotation, annotations_len,
+                                     loc, as_string));
     }
 
     RETURN_IF_ERROR(
-        codegen_argannotation(c, &_Py_ID(return), returns, annotations_len, loc));
+        codegen_argannotation(c, &_Py_ID(return), returns, annotations_len,
+                              loc, as_string));
 
     return 0;
 }
@@ -1173,13 +1255,39 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name);
+        int err = codegen_setup_annotations_scope(c, loc, (void *)args,
+                                                  ste->ste_name, NULL);
         Py_DECREF(ste);
         RETURN_IF_ERROR(err);
-        RETURN_IF_ERROR_IN_SCOPE(
-            c, codegen_annotations_in_scope(c, loc, args, returns, &annotations_len)
-        );
-        ADDOP_I(c, loc, BUILD_MAP, annotations_len);
+        if (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
+            // PEP 563: annotations are strings for every supported format,
+            // so a single body suffices.
+            RETURN_IF_ERROR_IN_SCOPE(
+                c, codegen_annotations_in_scope(c, loc, args, returns,
+                                                &annotations_len, 1)
+            );
+            ADDOP_I(c, loc, BUILD_MAP, annotations_len);
+        }
+        else {
+            // Emit the annotations twice: string constants for the STRING
+            // format, the annotation expressions for the VALUE format.
+            NEW_JUMP_TARGET_LABEL(c, value_body);
+            RETURN_IF_ERROR_IN_SCOPE(
+                c, codegen_annotations_string_dispatch(c, loc, value_body));
+            RETURN_IF_ERROR_IN_SCOPE(
+                c, codegen_annotations_in_scope(c, loc, args, returns,
+                                                &annotations_len, 1)
+            );
+            ADDOP_I(c, loc, BUILD_MAP, annotations_len);
+            ADDOP(c, loc, RETURN_VALUE);
+            USE_LABEL(c, value_body);
+            annotations_len = 0;
+            RETURN_IF_ERROR_IN_SCOPE(
+                c, codegen_annotations_in_scope(c, loc, args, returns,
+                                                &annotations_len, 0)
+            );
+            ADDOP_I(c, loc, BUILD_MAP, annotations_len);
+        }
         RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc));
         return MAKE_FUNCTION_ANNOTATE;
     }
@@ -1256,7 +1364,7 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
 {
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name));
+    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, e));
     if (allow_starred && e->kind == Starred_kind) {
         VISIT_IN_SCOPE(c, expr, e->v.Starred.value);
         ADDOP_I_IN_SCOPE(c, LOC(e), UNPACK_SEQUENCE, (Py_ssize_t)1);
@@ -1761,7 +1869,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, loc, defaults);
     RETURN_IF_ERROR(
-        codegen_setup_annotations_scope(c, LOC(s), s, name));
+        codegen_setup_annotations_scope(c, LOC(s), s, name,
+                                        s->v.TypeAlias.value));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     VISIT_IN_SCOPE(c, expr, s->v.TypeAlias.value);
