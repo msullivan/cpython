@@ -1361,23 +1361,12 @@ codegen_wrap_in_stopiteration_handler(compiler *c)
 
 static int
 codegen_type_param_bound_or_default(compiler *c, expr_ty e,
-                                    identifier name, void *key,
-                                    bool allow_starred)
+                                    identifier name, void *key)
 {
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
     RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, e));
     ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
-    ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
-    // Compile the value expression in unreachable code to retain compiler
-    // validation without including its evaluation in the final bytecode.
-    if (allow_starred && e->kind == Starred_kind) {
-        VISIT_IN_SCOPE(c, expr, e->v.Starred.value);
-        ADDOP_I_IN_SCOPE(c, LOC(e), UNPACK_SEQUENCE, (Py_ssize_t)1);
-    }
-    else {
-        VISIT_IN_SCOPE(c, expr, e);
-    }
     ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
     _PyCompile_ExitScope(c);
@@ -1413,7 +1402,7 @@ codegen_type_params(compiler *c, asdl_type_param_seq *type_params)
                 expr_ty bound = typeparam->v.TypeVar.bound;
                 RETURN_IF_ERROR(
                     codegen_type_param_bound_or_default(c, bound, typeparam->v.TypeVar.name,
-                                                        (void *)typeparam, false));
+                                                        (void *)typeparam));
 
                 int intrinsic = bound->kind == Tuple_kind
                     ? INTRINSIC_TYPEVAR_WITH_CONSTRAINTS
@@ -1428,7 +1417,7 @@ codegen_type_params(compiler *c, asdl_type_param_seq *type_params)
                 expr_ty default_ = typeparam->v.TypeVar.default_value;
                 RETURN_IF_ERROR(
                     codegen_type_param_bound_or_default(c, default_, typeparam->v.TypeVar.name,
-                                                        (void *)((uintptr_t)typeparam + 1), false));
+                                                        (void *)((uintptr_t)typeparam + 1)));
                 ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_TYPEPARAM_DEFAULT);
             }
             else if (seen_default) {
@@ -1446,7 +1435,7 @@ codegen_type_params(compiler *c, asdl_type_param_seq *type_params)
                 expr_ty default_ = typeparam->v.TypeVarTuple.default_value;
                 RETURN_IF_ERROR(
                     codegen_type_param_bound_or_default(c, default_, typeparam->v.TypeVarTuple.name,
-                                                        (void *)typeparam, true));
+                                                        (void *)typeparam));
                 ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_TYPEPARAM_DEFAULT);
                 seen_default = true;
             }
@@ -1465,7 +1454,7 @@ codegen_type_params(compiler *c, asdl_type_param_seq *type_params)
                 expr_ty default_ = typeparam->v.ParamSpec.default_value;
                 RETURN_IF_ERROR(
                     codegen_type_param_bound_or_default(c, default_, typeparam->v.ParamSpec.name,
-                                                        (void *)typeparam, false));
+                                                        (void *)typeparam));
                 ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_TYPEPARAM_DEFAULT);
                 seen_default = true;
             }
@@ -1884,10 +1873,6 @@ codegen_typealias_body(compiler *c, stmt_ty s)
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
-    ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
-    // Compile the value expression in unreachable code to retain compiler
-    // validation without including its evaluation in the final bytecode.
-    VISIT_IN_SCOPE(c, expr, s->v.TypeAlias.value);
     ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 0);
     _PyCompile_ExitScope(c);
