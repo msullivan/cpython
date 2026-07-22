@@ -344,8 +344,6 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 0;
         case LOAD_CONST:
             return 0;
-        case LOAD_CURRENT_FUNC:
-            return 0;
         case LOAD_DEREF:
             return 0;
         case LOAD_FAST:
@@ -847,8 +845,6 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
             return 1;
         case LOAD_CONST:
             return 1;
-        case LOAD_CURRENT_FUNC:
-            return 1;
         case LOAD_DEREF:
             return 1;
         case LOAD_FAST:
@@ -1264,7 +1260,6 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[267] = {
     [LOAD_BUILD_CLASS] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [LOAD_COMMON_CONSTANT] = { true, INSTR_FMT_IB, HAS_ARG_FLAG },
     [LOAD_CONST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_CONST_FLAG },
-    [LOAD_CURRENT_FUNC] = { true, INSTR_FMT_IX, 0 },
     [LOAD_DEREF] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [LOAD_FAST] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_PURE_FLAG },
     [LOAD_FAST_AND_CLEAR] = { true, INSTR_FMT_IB, HAS_ARG_FLAG | HAS_LOCAL_FLAG },
@@ -1491,7 +1486,6 @@ _PyOpcode_macro_expansion[256] = {
     [LOAD_BUILD_CLASS] = { .nuops = 1, .uops = { { _LOAD_BUILD_CLASS, OPARG_SIMPLE, 0 } } },
     [LOAD_COMMON_CONSTANT] = { .nuops = 1, .uops = { { _LOAD_COMMON_CONSTANT, OPARG_SIMPLE, 0 } } },
     [LOAD_CONST] = { .nuops = 1, .uops = { { _LOAD_CONST, OPARG_SIMPLE, 0 } } },
-    [LOAD_CURRENT_FUNC] = { .nuops = 1, .uops = { { _LOAD_CURRENT_FUNC, OPARG_SIMPLE, 0 } } },
     [LOAD_DEREF] = { .nuops = 1, .uops = { { _LOAD_DEREF, OPARG_SIMPLE, 0 } } },
     [LOAD_FAST] = { .nuops = 1, .uops = { { _LOAD_FAST, OPARG_SIMPLE, 0 } } },
     [LOAD_FAST_AND_CLEAR] = { .nuops = 1, .uops = { { _LOAD_FAST_AND_CLEAR, OPARG_SIMPLE, 0 } } },
@@ -1729,7 +1723,6 @@ const char *_PyOpcode_OpName[267] = {
     [LOAD_CLOSURE] = "LOAD_CLOSURE",
     [LOAD_COMMON_CONSTANT] = "LOAD_COMMON_CONSTANT",
     [LOAD_CONST] = "LOAD_CONST",
-    [LOAD_CURRENT_FUNC] = "LOAD_CURRENT_FUNC",
     [LOAD_DEREF] = "LOAD_DEREF",
     [LOAD_FAST] = "LOAD_FAST",
     [LOAD_FAST_AND_CLEAR] = "LOAD_FAST_AND_CLEAR",
@@ -1855,6 +1848,7 @@ const uint8_t _PyOpcode_Caches[256] = {
 PyAPI_DATA(const uint8_t) _PyOpcode_Deopt[256];
 #ifdef NEED_OPCODE_METADATA
 const uint8_t _PyOpcode_Deopt[256] = {
+    [120] = 120,
     [121] = 121,
     [122] = 122,
     [123] = 123,
@@ -2024,7 +2018,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [LOAD_BUILD_CLASS] = LOAD_BUILD_CLASS,
     [LOAD_COMMON_CONSTANT] = LOAD_COMMON_CONSTANT,
     [LOAD_CONST] = LOAD_CONST,
-    [LOAD_CURRENT_FUNC] = LOAD_CURRENT_FUNC,
     [LOAD_DEREF] = LOAD_DEREF,
     [LOAD_FAST] = LOAD_FAST,
     [LOAD_FAST_AND_CLEAR] = LOAD_FAST_AND_CLEAR,
@@ -2116,6 +2109,7 @@ const uint8_t _PyOpcode_Deopt[256] = {
 #endif // NEED_OPCODE_METADATA
 
 #define EXTRA_CASES \
+    case 120: \
     case 121: \
     case 122: \
     case 123: \

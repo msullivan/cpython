@@ -2487,14 +2487,6 @@ dummy_func(
             }
         }
 
-        inst(LOAD_CURRENT_FUNC, ( -- func)) {
-            /* Push the function object of the currently executing frame.
-               Used by compiler-generated __annotate__ functions to pass
-               themselves to annotationlib. */
-            assert(PyStackRef_FunctionCheck(frame->f_funcobj));
-            func = PyStackRef_DUP(frame->f_funcobj);
-        }
-
         inst(BUILD_STRING, (pieces[oparg] -- str)) {
             PyObject *str_o = _Py_BuildString_StackRefSteal(pieces, oparg);
             DEAD(pieces);

@@ -1716,6 +1716,14 @@ class TestCallAnnotateFunction(unittest.TestCase):
                 annotationlib.call_annotate_function(annotate, format=fmt)
 
 
+def _call_annotate(cls):
+    # Compiler-generated __annotate__ functions do not support the VALUE
+    # format directly; go through annotationlib to evaluate the strings.
+    return annotationlib.call_annotate_function(
+        cls.__annotate__, Format.VALUE, owner=cls
+    )
+
+
 class MetaclassTests(unittest.TestCase):
     def test_annotated_meta(self):
         class Meta(type):
@@ -1728,13 +1736,13 @@ class MetaclassTests(unittest.TestCase):
             b: float
 
         self.assertEqual(get_annotations(Meta), {"a": int})
-        self.assertEqual(Meta.__annotate__(Format.VALUE), {"a": int})
+        self.assertEqual(_call_annotate(Meta), {"a": int})
 
         self.assertEqual(get_annotations(X), {})
         self.assertIs(X.__annotate__, None)
 
         self.assertEqual(get_annotations(Y), {"b": float})
-        self.assertEqual(Y.__annotate__(Format.VALUE), {"b": float})
+        self.assertEqual(_call_annotate(Y), {"b": float})
 
     def test_unannotated_meta(self):
         class Meta(type):
@@ -1753,7 +1761,7 @@ class MetaclassTests(unittest.TestCase):
         self.assertIs(Y.__annotate__, None)
 
         self.assertEqual(get_annotations(X), {"a": str})
-        self.assertEqual(X.__annotate__(Format.VALUE), {"a": str})
+        self.assertEqual(_call_annotate(X), {"a": str})
 
     def test_ordering(self):
         # Based on a sample by David Ellis
@@ -1794,7 +1802,7 @@ class MetaclassTests(unittest.TestCase):
                         annotate_func = getattr(c, "__annotate__", None)
                         if c.expected_annotations:
                             self.assertEqual(
-                                annotate_func(Format.VALUE), c.expected_annotations
+                                _call_annotate(c), c.expected_annotations
                             )
                         else:
                             self.assertIs(annotate_func, None)

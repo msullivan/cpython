@@ -537,8 +537,8 @@ func_get_annotation_dict(PyFunctionObject *op)
         if (op->func_annotate == NULL || !PyCallable_Check(op->func_annotate)) {
             Py_RETURN_NONE;
         }
-        PyObject *one = _PyLong_GetOne();
-        PyObject *ann_dict = _PyObject_CallOneArg(op->func_annotate, one);
+        PyObject *ann_dict = _PyObject_CallAnnotateForValue(op->func_annotate,
+                                                            (PyObject *)op);
         if (ann_dict == NULL) {
             return NULL;
         }

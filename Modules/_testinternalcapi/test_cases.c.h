@@ -9812,23 +9812,6 @@
             DISPATCH();
         }
 
-        TARGET(LOAD_CURRENT_FUNC) {
-            #if _Py_TAIL_CALL_INTERP
-            int opcode = LOAD_CURRENT_FUNC;
-            (void)(opcode);
-            #endif
-            frame->instr_ptr = next_instr;
-            next_instr += 1;
-            INSTRUCTION_STATS(LOAD_CURRENT_FUNC);
-            _PyStackRef func;
-            assert(PyStackRef_FunctionCheck(frame->f_funcobj));
-            func = PyStackRef_DUP(frame->f_funcobj);
-            stack_pointer[0] = func;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            DISPATCH();
-        }
-
         TARGET(LOAD_DEREF) {
             #if _Py_TAIL_CALL_INTERP
             int opcode = LOAD_DEREF;

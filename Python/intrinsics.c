@@ -216,23 +216,6 @@ make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
     return _PySet_Freeze(set);
 }
 
-static PyObject *
-annotate_value(PyThreadState* Py_UNUSED(ignored), PyObject *annotate)
-{
-    // Implementation of the VALUE format for compiler-generated
-    // __annotate__ functions, which natively support only the STRING
-    // format. annotationlib evaluates the strings using the annotate
-    // function's globals and closure.
-    PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
-                                                     "_annotate_value");
-    if (impl == NULL) {
-        return NULL;
-    }
-    PyObject *res = PyObject_CallOneArg(impl, annotate);
-    Py_DECREF(impl);
-    return res;
-}
-
 
 #define INTRINSIC_FUNC_ENTRY(N, F) \
     [N] = {F, #N},
@@ -252,7 +235,6 @@ _PyIntrinsics_UnaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SUBSCRIPT_GENERIC, _Py_subscript_generic)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_TYPEALIAS, _Py_make_typealias)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_BUILD_FROZENSET, make_frozenset)
-    INTRINSIC_FUNC_ENTRY(INTRINSIC_ANNOTATE_VALUE, annotate_value)
 };
 
 
