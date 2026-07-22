@@ -930,6 +930,16 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     return {key: eval_one(value) for key, value in annos.items()}
 
 
+def _annotate_value(annotate):
+    """Implement VALUE for compiler-generated ``__annotate__`` functions.
+
+    Those functions natively produce only annotation strings. The compiler
+    calls this helper through the ``INTRINSIC_ANNOTATE_VALUE`` intrinsic,
+    which obtains the currently executing function from its frame.
+    """
+    return _eval_string_annotate(annotate, Format.VALUE, None)
+
+
 def _unmangle_private_name(name):
     """Given a mangled name like '_Foo__bar', return '__bar'; else None."""
     if not name.startswith("_") or name.startswith("__"):
