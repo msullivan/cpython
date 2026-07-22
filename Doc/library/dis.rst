@@ -1884,6 +1884,10 @@ iterations of the loop.
    |                                   | of the type alias's name,         |
    |                                   | type parameters, and value.       |
    +-----------------------------------+-----------------------------------+
+   | ``INTRINSIC_ANNOTATE_VALUE``      | Evaluates a compiler-generated    |
+   |                                   | annotation function in the value  |
+   |                                   | format.                           |
+   +-----------------------------------+-----------------------------------+
 
    .. versionadded:: 3.12
 

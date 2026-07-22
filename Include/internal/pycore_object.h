@@ -1014,14 +1014,6 @@ enum _PyAnnotateFormat {
     _Py_ANNOTATE_FORMAT_STRING = 4,
 };
 
-// Call an __annotate__ function to get annotations in the VALUE format.
-// If the function does not support the VALUE format (compiler-generated
-// __annotate__ functions support only the STRING format), fall back to
-// annotationlib.call_annotate_function(), which evaluates the strings.
-// *owner* may be NULL.
-extern PyObject *_PyObject_CallAnnotateForValue(PyObject *annotate,
-                                                PyObject *owner);
-
 extern int _PyObject_SetDict(PyObject *obj, PyObject *value);
 extern int _PyObject_SetManagedDict(PyObject *obj, PyObject *new_dict);
 

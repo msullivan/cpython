@@ -144,13 +144,13 @@ SyntaxError: duplicate parameter 'x' in function definition"""
         console = InteractiveColoredConsole()
         source = dedent("""\
         x: int = 1
-        print(__annotate__(4))
+        print(__annotate__(1))
         """)
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
             result = console.runsource(source)
         self.assertFalse(result)
-        self.assertEqual(f.getvalue(), "{'x': 'int'}\n")
+        self.assertEqual(f.getvalue(), "{'x': <class 'int'>}\n")
 
     def test_future_annotations(self):
         console = InteractiveColoredConsole()
