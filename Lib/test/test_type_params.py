@@ -1,4 +1,5 @@
 import annotationlib
+import dis
 import textwrap
 import types
 import unittest
@@ -1419,6 +1420,32 @@ class DefaultsTest(unittest.TestCase):
 
 
 class TestEvaluateFunctions(unittest.TestCase):
+    def test_compiler_generated_functions_are_string_only(self):
+        def outer():
+            closed = int
+            type Alias = list[closed]
+            def f[T: (closed, str) = tuple[closed], *Ts = *tuple[closed]]():
+                pass
+            return Alias, f.__type_params__
+
+        Alias, (T, Ts) = outer()
+        cases = [
+            (Alias.evaluate_value, list[int]),
+            (T.evaluate_constraints, (int, str)),
+            (T.evaluate_default, tuple[int]),
+            (Ts.evaluate_default, "*tuple[int]"),
+        ]
+        for evaluate, expected in cases:
+            with self.subTest(evaluate=evaluate):
+                value = evaluate(annotationlib.Format.VALUE)
+                if isinstance(expected, str):
+                    self.assertEqual(repr(value), expected)
+                else:
+                    self.assertEqual(value, expected)
+                opnames = [instr.opname for instr in dis.get_instructions(evaluate)]
+                self.assertIn("CALL_INTRINSIC_1", opnames)
+                self.assertNotIn("LOAD_DEREF", opnames)
+
     def test_general(self):
         type Alias = int
         Alias2 = TypeAliasType("Alias2", int)

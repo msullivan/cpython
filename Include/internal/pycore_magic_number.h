@@ -302,6 +302,7 @@ Known values:
     Python 3.16a0 3702 (__annotate__ functions support only the STRING format)
     Python 3.16a0 3703 (evaluate functions support STRING natively; drop VALUE_WITH_FAKE_GLOBALS)
     Python 3.16a0 3705 (__annotate__(VALUE) calls annotationlib via an intrinsic)
+    Python 3.16a0 3706 (evaluate functions compute VALUE via the annotation intrinsic)
 
 
     Python 3.17 will start with 3750
@@ -315,7 +316,7 @@ PC/launcher.c must also be updated.
 
 */
 
-#define PYC_MAGIC_NUMBER 3705
+#define PYC_MAGIC_NUMBER 3706
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \
