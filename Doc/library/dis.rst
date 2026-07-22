@@ -1885,8 +1885,8 @@ iterations of the loop.
    |                                   | type parameters, and value.       |
    +-----------------------------------+-----------------------------------+
    | ``INTRINSIC_ANNOTATE_VALUE``      | Evaluates a compiler-generated    |
-   |                                   | annotation function in the value  |
-   |                                   | format.                           |
+   |                                   | annotation or evaluate function   |
+   |                                   | in the value format.              |
    +-----------------------------------+-----------------------------------+
 
    .. versionadded:: 3.12

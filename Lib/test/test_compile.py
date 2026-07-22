@@ -1154,7 +1154,7 @@ class TestSpecifics(unittest.TestCase):
                 self.assertIn('LOAD_ATTR', instructions)
                 self.assertIn('CALL', instructions)
 
-    def test_folding_type_param(self):
+    def test_type_param_evaluate_functions_are_string_only(self):
         get_code_fn_cls = lambda x: x.co_consts[0].co_consts[2]
         get_code_type_alias = lambda x: x.co_consts[0].co_consts[3]
         snippets = [
@@ -1176,8 +1176,9 @@ class TestSpecifics(unittest.TestCase):
             args = [opcode.oparg for opcode in opcodes]
             self.assertNotIn(40, args)
             self.assertNotIn(5, args)
-            self.assertIn('LOAD_SMALL_INT', instructions)
-            self.assertIn(45, args)
+            self.assertNotIn(45, args)
+            self.assertIn('40 + 5', code.co_consts)
+            self.assertIn('CALL_INTRINSIC_1', instructions)
 
     def test_lineno_procedure_call(self):
         def call():

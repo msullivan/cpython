@@ -217,10 +217,10 @@ make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
 }
 
 static PyObject *
-annotate_value(PyThreadState *tstate, PyObject *Py_UNUSED(format))
+annotate_value(PyThreadState *tstate, PyObject *is_evaluate)
 {
     // Implementation of the VALUE format for compiler-generated
-    // __annotate__ functions, which natively support only STRING.
+    // __annotate__ and evaluate functions, whose bodies produce only STRING.
     // The executing frame retains the exact function, including the globals
     // and closure annotationlib needs to evaluate the annotation strings.
     _PyInterpreterFrame *frame = tstate->current_frame;
@@ -233,7 +233,8 @@ annotate_value(PyThreadState *tstate, PyObject *Py_UNUSED(format))
     if (impl == NULL) {
         return NULL;
     }
-    PyObject *res = PyObject_CallOneArg(impl, annotate);
+    PyObject *res = PyObject_CallFunctionObjArgs(impl, annotate, is_evaluate,
+                                                 NULL);
     Py_DECREF(impl);
     return res;
 }
