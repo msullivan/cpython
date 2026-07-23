@@ -819,7 +819,6 @@ class _GlobalsWithFallback(dict):
         return type(self)(self, self.fallback)
 
 
-_BYPASS_CLASS_SCOPE_MARKER = "__annotationlib_bypass_class_scope__"
 _CLASS_SCOPE_LOOKUP = "__annotationlib_class_scope_lookup__"
 
 
@@ -830,7 +829,7 @@ class _ClassScopeTransformer(ast.NodeTransformer):
         self.bypass_names = bypass_names
 
     def visit_Name(self, node):
-        if not isinstance(node.ctx, ast.Load) or node.id in self.bypass_names:
+        if node.id in self.bypass_names:
             return node
         call = ast.Call(
             func=ast.Name(id=_CLASS_SCOPE_LOOKUP, ctx=ast.Load()),
@@ -862,7 +861,7 @@ class _ClassScopeTransformer(ast.NodeTransformer):
     visit_GeneratorExp = _visit_comprehension
 
 
-def _annotation_scope_bypass_names(annotate):
+def _get_annotate_metadata(annotate):
     code = getattr(annotate, "__code__", None)
     if code is None:
         return frozenset()
@@ -870,7 +869,7 @@ def _annotation_scope_bypass_names(annotate):
         if (
             isinstance(const, tuple)
             and len(const) == 2
-            and const[0] == _BYPASS_CLASS_SCOPE_MARKER
+            and const[0] == "__annotate_metadata__"
         ):
             return frozenset(const[1])
     return frozenset()
@@ -920,7 +919,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         )
     else:
         cells = None
-    bypass_class_scope = _annotation_scope_bypass_names(annotate)
+    bypass_class_scope = _get_annotate_metadata(annotate)
 
     # Build the evaluation environment. The globals are the function's
     # globals overlaid with the values of the closure cells, which take

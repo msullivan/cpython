@@ -723,8 +723,8 @@ codegen_compare_format(compiler *c, location loc, int compare_op, long format)
 static int
 codegen_add_annotation_scope_metadata(compiler *c)
 {
-    PyObject *names = PyList_New(0);
-    if (names == NULL) {
+    PyObject *global_names = PyList_New(0);
+    if (global_names == NULL) {
         return ERROR;
     }
     PyObject *name, *value;
@@ -733,34 +733,32 @@ codegen_add_annotation_scope_metadata(compiler *c)
                        &pos, &name, &value)) {
         long flags = PyLong_AsLong(value);
         if (flags == -1 && PyErr_Occurred()) {
-            Py_DECREF(names);
+            Py_DECREF(global_names);
             return ERROR;
         }
-        if ((SYMBOL_TO_SCOPE(flags) == GLOBAL_EXPLICIT
-             || (flags & DEF_NONLOCAL))
-            && PyList_Append(names, name) < 0) {
-            Py_DECREF(names);
+        if (SYMBOL_TO_SCOPE(flags) == GLOBAL_EXPLICIT
+            && PyList_Append(global_names, name) < 0) {
+            Py_DECREF(global_names);
             return ERROR;
         }
     }
-    if (PyList_GET_SIZE(names) == 0) {
-        Py_DECREF(names);
+    if (PyList_GET_SIZE(global_names) == 0) {
+        Py_DECREF(global_names);
         return SUCCESS;
     }
-    PyObject *names_tuple = PyList_AsTuple(names);
-    Py_DECREF(names);
-    if (names_tuple == NULL) {
+    PyObject *global_names_tuple = PyList_AsTuple(global_names);
+    Py_DECREF(global_names);
+    if (global_names_tuple == NULL) {
         return ERROR;
     }
-    PyObject *marker = PyUnicode_FromString(
-        "__annotationlib_bypass_class_scope__");
+    PyObject *marker = PyUnicode_FromString("__annotate_metadata__");
     if (marker == NULL) {
-        Py_DECREF(names_tuple);
+        Py_DECREF(global_names_tuple);
         return ERROR;
     }
-    PyObject *metadata = PyTuple_Pack(2, marker, names_tuple);
+    PyObject *metadata = PyTuple_Pack(2, marker, global_names_tuple);
     Py_DECREF(marker);
-    Py_DECREF(names_tuple);
+    Py_DECREF(global_names_tuple);
     if (metadata == NULL) {
         return ERROR;
     }

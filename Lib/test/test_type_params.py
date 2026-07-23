@@ -799,6 +799,20 @@ class TypeParamsClassScopeTest(unittest.TestCase):
         cls = ns["outer"]()
         self.assertEqual(cls.Alias.__value__, "class")
 
+    def test_explicit_nonlocal_assignment(self):
+        ns = run_code("""
+            x = "global"
+            def outer():
+                x = "nonlocal"
+                class Cls:
+                    nonlocal x
+                    type Alias = x
+                Cls.x = "class"
+                return Cls
+        """)
+        cls = ns["outer"]()
+        self.assertEqual(cls.Alias.__value__, "class")
+
     def test_nested_free(self):
         ns = run_code("""
             def f():
