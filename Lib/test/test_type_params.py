@@ -398,6 +398,28 @@ class TypeParamsAccessTest(unittest.TestCase):
         T, = Alias.__type_params__
         self.assertIs(Alias.__value__(), T)
 
+    def test_type_alias_value_keeps_live_namespaces(self):
+        ns = run_code("""
+            value = 1
+            type Alias = lambda: value
+        """)
+        callback = ns["Alias"].__value__
+        ns["value"] = 2
+        self.assertEqual(callback(), 2)
+
+        def outer():
+            value = 1
+            type Alias = lambda: value
+            def set_value(new_value):
+                nonlocal value
+                value = new_value
+            return Alias, set_value
+
+        alias, set_value = outer()
+        callback = alias.__value__
+        set_value(2)
+        self.assertEqual(callback(), 2)
+
     def test_class_base_containing_lambda(self):
         # Test that scopes nested inside hidden functions work correctly
         outer_var = "outer"
