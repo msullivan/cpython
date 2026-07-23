@@ -2,6 +2,8 @@
 
 import ast
 import builtins
+import collections
+import collections.abc
 import enum
 import keyword
 import sys
@@ -755,6 +757,54 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
         raise ValueError(f"Invalid format: {format!r}")
 
 
+class _CellMapping(collections.abc.Mapping):
+    """A mapping that holds cells and dereferences them on access."""
+
+    __slots__ = ("closure",)
+
+    def __init__(self, closure):
+        self.closure = closure
+
+    def __getitem__(self, key):
+        cell = self.closure[key]
+        try:
+            return cell.cell_contents
+        except ValueError:
+            raise NameError(
+                f"cannot access free variable {key!r} where it is not "
+                "associated with a value in enclosing scope",
+                name=key,
+            )
+
+    def __iter__(self):
+        return iter(self.closure)
+
+    def __len__(self):
+        return len(self.closure)
+
+
+# XXX: The thing we use this for is just wrong, though, and isn't
+# and can't be right.
+class _IndirectionMapping(collections.abc.Mapping):
+    """A mapping that holds cells and dereferences them on access."""
+
+    __slots__ = ("indirection", "map")
+
+    def __init__(self, indirection, map):
+        self.indirection = indirection
+        self.map = map
+
+    def __getitem__(self, key):
+        key = self.indirection[key]
+        return self.map[key]
+
+    def __iter__(self):
+        return iter(self.indirection)
+
+    def __len__(self):
+        return len(self.indirection)
+
+
 class _GlobalsWithFallback(dict):
     """A globals overlay that preserves a dict subclass's __missing__."""
 
@@ -765,40 +815,12 @@ class _GlobalsWithFallback(dict):
         self.fallback = fallback
 
     def __missing__(self, key):
+        if self.fallback is None:
+            raise KeyError(key)
         return self.fallback[key]
 
-    def copy_for_eval(self):
+    def copy(self):
         return type(self)(self, self.fallback)
-
-
-class _UnboundNamesDict(_GlobalsWithFallback):
-    """Globals for evaluating stringified annotations.
-
-    Raises NameError for names that correspond to unbound closure cells
-    of the __annotate__ function, mirroring the error that evaluating the
-    original annotation expression would raise. Other missing names raise
-    KeyError as usual, so lookups fall back to the builtins.
-    """
-
-    __slots__ = ("unbound_names",)
-
-    def __init__(self, namespace, unbound_names, fallback=None):
-        super().__init__(namespace, fallback)
-        self.unbound_names = unbound_names
-
-    def __missing__(self, key):
-        if key in self.unbound_names:
-            raise NameError(
-                f"cannot access free variable {key!r} where it is not "
-                "associated with a value in enclosing scope",
-                name=key,
-            )
-        if self.fallback is not None:
-            return self.fallback[key]
-        raise KeyError(key)
-
-    def copy_for_eval(self):
-        return type(self)(self, self.unbound_names, self.fallback)
 
 
 _BYPASS_CLASS_SCOPE_MARKER = "__annotationlib_bypass_class_scope__"
@@ -920,10 +942,7 @@ def _eval_in_class_annotation_scope(
                 except AttributeError:
                     raise NameError(_NAME_ERROR_MSG.format(name=name), name=name)
 
-    if isinstance(globals, _GlobalsWithFallback):
-        eval_globals = globals.copy_for_eval()
-    else:
-        eval_globals = dict(globals)
+    eval_globals = globals.copy()
     eval_globals[_CLASS_SCOPE_LOOKUP] = class_scope_lookup
     code = compile(tree, "<string>", "eval")
     if lexical_qualname is not None:
@@ -967,49 +986,44 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     # the annotation. Names that were subject to private name mangling
     # appear in the environment under their mangled name, but occur
     # unmangled in the annotation strings, so alias them.
-    if globals is None:
-        env = {}
-        globals_fallback = None
-    else:
-        env = dict(globals)
-        globals_fallback = globals if type(globals) is not dict else None
+
+    env = collections.ChainMap()
+    if globals is not None:
+        env.maps.insert(0, globals)
+
     class_locals = None
     unbound_names = frozenset()
 
-    def add_to_ns(ns, name, value):
-        ns[name] = value
+    def add_to_indir(indir, name):
+        indir[name] = name
         unmangled = _unmangle_private_name(name)
         if unmangled is not None:
-            ns[unmangled] = value
+            indir[unmangled] = name
 
     if cells is not None:
+        indir = {}
         unbound = set()
-        for name, cell in cells.items():
+        for name in cells:
+            # shit how does __conditional_annotations__ work again!!!
             if name in ("__classdict__", "__conditional_annotations__"):
                 continue
-            try:
-                value = cell.cell_contents
-            except ValueError:
-                env.pop(name, None)
-                unbound.add(name)
-                continue
-            add_to_ns(env, name, value)
+            add_to_indir(indir, name)
+
+        env.maps.insert(0, _IndirectionMapping(indir, _CellMapping(cells)))
+
         if "__classdict__" in cells:
             try:
                 classdict = cells["__classdict__"].cell_contents
             except ValueError:
                 pass
             else:
-                class_locals = {}
-                for name, value in classdict.items():
-                    add_to_ns(class_locals, name, value)
-        if unbound:
-            unbound_names = frozenset(unbound)
-            env = _UnboundNamesDict(env, unbound_names, globals_fallback)
-        elif globals_fallback is not None:
-            env = _GlobalsWithFallback(env, globals_fallback)
-    elif globals_fallback is not None:
-        env = _GlobalsWithFallback(env, globals_fallback)
+                indir = {}
+                for name in classdict:
+                    add_to_indir(indir, name)
+                class_locals = _IndirectionMapping(indir, classdict)
+
+    if not isinstance(env, dict):
+        env = _GlobalsWithFallback({}, env)
 
     def make_fwdref(string):
         fwdref = ForwardRef(string, owner=owner, is_class=is_class)

@@ -481,6 +481,46 @@ class DeferredEvaluationTests(unittest.TestCase):
                     inspect.Parameter("format", inspect.Parameter.POSITIONAL_ONLY)
                 ]))
 
+    def test_annotation_values_keep_live_namespaces(self):
+        ns = run_code("""
+            value = 1
+            def func(x: lambda: value, y: (value for _ in (None,))):
+                pass
+        """)
+        annotations = ns["func"].__annotations__
+        callback = annotations["x"]
+        generator = annotations["y"]
+        ns["value"] = 2
+        self.assertEqual(callback(), 2)
+        self.assertEqual(next(generator), 2)
+
+        def outer():
+            value = 1
+            def func(x: lambda: value):
+                pass
+            def set_value(new_value):
+                nonlocal value
+                value = new_value
+            return func, set_value
+
+        func, set_value = outer()
+        callback = func.__annotations__["x"]
+        set_value(2)
+        self.assertEqual(callback(), 2)
+
+        # This is truly sketchy.
+        ns = run_code("""
+            def munge():
+                C.value = 1
+                return int
+            class C:
+                value = 0
+                def func(x: tuple[munge(), value]):
+                    pass
+        """)
+        annotations = ns["C"].func.__annotations__
+        self.assertEqual(annotations["x"], tuple[int, 1])
+
     def test_nested_annotation_value_qualnames(self):
         ns = run_code("""
             module_value: lambda: None
