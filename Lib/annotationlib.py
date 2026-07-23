@@ -802,6 +802,7 @@ class _UnboundNamesDict(_GlobalsWithFallback):
 
 
 _BYPASS_CLASS_SCOPE_MARKER = "__annotationlib_bypass_class_scope__"
+_QUALNAME_MARKER = "__annotationlib_qualname__"
 _CLASS_SCOPE_LOOKUP = "__annotationlib_class_scope_lookup__"
 
 
@@ -851,6 +852,12 @@ def _annotation_scope_bypass_names(annotate):
     for const in code.co_consts:
         if (
             isinstance(const, tuple)
+            and len(const) == 4
+            and const[0] == _QUALNAME_MARKER
+        ):
+            return frozenset(const[3])
+        if (
+            isinstance(const, tuple)
             and len(const) == 2
             and const[0] == _BYPASS_CLASS_SCOPE_MARKER
         ):
@@ -858,7 +865,45 @@ def _annotation_scope_bypass_names(annotate):
     return frozenset()
 
 
-def _eval_in_class_annotation_scope(string, globals, class_locals, bypass_names):
+def _annotation_scope_qualname(annotate):
+    code = getattr(annotate, "__code__", None)
+    if code is None:
+        return None
+    for const in code.co_consts:
+        if (
+            isinstance(const, tuple)
+            and len(const) == 4
+            and const[0] == _QUALNAME_MARKER
+        ):
+            parent_qualname, parent_scope_type = const[1:3]
+            if parent_scope_type == 0:  # COMPILE_SCOPE_MODULE
+                return ""
+            if parent_scope_type in (2, 3, 4):
+                # Function, async-function, and lambda bodies introduce a
+                # ``<locals>`` component for code nested within them.
+                return f"{parent_qualname}.<locals>"
+            return parent_qualname
+    return None
+
+
+def _apply_lexical_qualname(code, lexical_qualname, *, is_root=True):
+    consts = tuple(
+        _apply_lexical_qualname(
+            const, lexical_qualname, is_root=False
+        )
+        if isinstance(const, types.CodeType)
+        else const
+        for const in code.co_consts
+    )
+    qualname = code.co_qualname
+    if not is_root and lexical_qualname:
+        qualname = f"{lexical_qualname}.{qualname}"
+    return code.replace(co_consts=consts, co_qualname=qualname)
+
+
+def _eval_in_class_annotation_scope(
+    string, globals, class_locals, bypass_names, lexical_qualname
+):
     tree = ast.parse(_rewrite_star_unpack(string), mode="eval")
     tree = _ClassScopeTransformer(bypass_names).visit(tree)
     ast.fix_missing_locations(tree)
@@ -880,7 +925,10 @@ def _eval_in_class_annotation_scope(string, globals, class_locals, bypass_names)
     else:
         eval_globals = dict(globals)
     eval_globals[_CLASS_SCOPE_LOOKUP] = class_scope_lookup
-    return eval(compile(tree, "<string>", "eval"), globals=eval_globals)
+    code = compile(tree, "<string>", "eval")
+    if lexical_qualname is not None:
+        code = _apply_lexical_qualname(code, lexical_qualname)
+    return eval(code, globals=eval_globals)
 
 
 def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
@@ -906,6 +954,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     else:
         cells = None
     bypass_class_scope = _annotation_scope_bypass_names(annotate)
+    lexical_qualname = _annotation_scope_qualname(annotate)
 
     # Build the evaluation environment. The globals are the function's
     # globals overlaid with the values of the closure cells, which take
@@ -985,6 +1034,9 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             # values in the STRING format.
             return string
         fwdref = make_fwdref(string)
+        code = fwdref.__forward_code__
+        if lexical_qualname is not None:
+            code = _apply_lexical_qualname(code, lexical_qualname)
         if (
             string in unbound_names
             and not (class_locals is not None and string in class_locals)
@@ -1002,9 +1054,13 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         if format == Format.VALUE:
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string, env, class_locals, bypass_class_scope
+                    string,
+                    env,
+                    class_locals,
+                    bypass_class_scope,
+                    lexical_qualname,
                 )
-            return eval(fwdref.__forward_code__, globals=env, locals=env)
+            return eval(code, globals=env, locals=env)
         # FORWARDREF. First try to evaluate the whole annotation; if that
         # fails, evaluate it again in an environment where every name
         # lookup produces a _Stringifier, so that unresolvable names embedded
@@ -1012,9 +1068,13 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         try:
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string, env, class_locals, bypass_class_scope
+                    string,
+                    env,
+                    class_locals,
+                    bypass_class_scope,
+                    lexical_qualname,
                 )
-            return eval(fwdref.__forward_code__, globals=env, locals=env)
+            return eval(code, globals=env, locals=env)
         except Exception:
             pass
         if string.isidentifier():
@@ -1029,7 +1089,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             format=Format.FORWARDREF,
         )
         try:
-            result = eval(fwdref.__forward_code__, stringifier_dict)
+            result = eval(code, stringifier_dict)
         except Exception:
             return fwdref
         stringifier_dict.transmogrify(cells)

@@ -481,6 +481,28 @@ class DeferredEvaluationTests(unittest.TestCase):
                     inspect.Parameter("format", inspect.Parameter.POSITIONAL_ONLY)
                 ]))
 
+    def test_nested_annotation_value_qualnames(self):
+        ns = run_code("""
+            module_value: lambda: None
+            class C:
+                value: lambda: None
+            def outer():
+                def func(x: lambda: None):
+                    pass
+                return func
+        """)
+        module_annotations = ns["__annotate__"](annotationlib.Format.VALUE)
+        self.assertEqual(
+            module_annotations["module_value"].__qualname__, "<lambda>"
+        )
+        self.assertEqual(
+            ns["C"].__annotations__["value"].__qualname__, "C.<lambda>"
+        )
+        self.assertEqual(
+            ns["outer"]().__annotations__["x"].__qualname__,
+            "outer.<locals>.<lambda>",
+        )
+
     def test_comprehension_in_annotation(self):
         # This crashed in an earlier version of the code
         ns = run_code("x: [y for y in range(10)]")

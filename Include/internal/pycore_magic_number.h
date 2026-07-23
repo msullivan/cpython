@@ -304,6 +304,7 @@ Known values:
     Python 3.16a0 3705 (__annotate__(VALUE) calls annotationlib via an intrinsic)
     Python 3.16a0 3706 (evaluate functions compute VALUE via the annotation intrinsic)
     Python 3.16a0 3707 (evaluate functions no longer compile value expressions)
+    Python 3.16a0 3708 (annotation scopes store their lexical context)
 
 
     Python 3.17 will start with 3750
@@ -317,7 +318,7 @@ PC/launcher.c must also be updated.
 
 */
 
-#define PYC_MAGIC_NUMBER 3707
+#define PYC_MAGIC_NUMBER 3708
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \

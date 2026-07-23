@@ -717,52 +717,70 @@ codegen_compare_format(compiler *c, location loc, int compare_op, long format)
 }
 
 static int
-codegen_add_annotation_scope_metadata(compiler *c)
+codegen_add_annotation_scope_metadata(compiler *c, PyObject *parent_qualname,
+                                      int parent_scope_type,
+                                      PySTEntryObject *parent_ste)
 {
-    PyObject *names = PyList_New(0);
+    // Use an insertion-ordered dictionary as a set so the metadata (and thus
+    // the resulting pyc) is deterministic.
+    PyObject *names = PyDict_New();
     if (names == NULL) {
         return ERROR;
     }
-    PyObject *name, *value;
-    Py_ssize_t pos = 0;
-    while (PyDict_Next(SYMTABLE_ENTRY(c)->ste_symbols,
-                       &pos, &name, &value)) {
-        long flags = PyLong_AsLong(value);
-        if (flags == -1 && PyErr_Occurred()) {
-            Py_DECREF(names);
-            return ERROR;
-        }
-        if ((SYMBOL_TO_SCOPE(flags) == GLOBAL_EXPLICIT
-             || (flags & DEF_NONLOCAL))
-            && PyList_Append(names, name) < 0) {
-            Py_DECREF(names);
-            return ERROR;
+    PySTEntryObject *entries[] = {parent_ste, SYMTABLE_ENTRY(c)};
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(entries); i++) {
+        PyObject *name, *value;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(entries[i]->ste_symbols, &pos, &name, &value)) {
+            long flags = PyLong_AsLong(value);
+            if (flags == -1 && PyErr_Occurred()) {
+                Py_DECREF(names);
+                return ERROR;
+            }
+            if ((SYMBOL_TO_SCOPE(flags) == GLOBAL_EXPLICIT
+                 || (flags & DEF_NONLOCAL))
+                && PyDict_SetItem(names, name, Py_None) < 0) {
+                Py_DECREF(names);
+                return ERROR;
+            }
         }
     }
-    if (PyList_GET_SIZE(names) == 0) {
-        Py_DECREF(names);
-        return SUCCESS;
-    }
-    PyObject *names_tuple = PyList_AsTuple(names);
+    PyObject *names_list = PyDict_Keys(names);
     Py_DECREF(names);
+    if (names_list == NULL) {
+        return ERROR;
+    }
+    PyObject *names_tuple = PyList_AsTuple(names_list);
+    Py_DECREF(names_list);
     if (names_tuple == NULL) {
         return ERROR;
     }
-    PyObject *marker = PyUnicode_FromString(
-        "__annotationlib_bypass_class_scope__");
-    if (marker == NULL) {
+    PyObject *scope_type = PyLong_FromLong(parent_scope_type);
+    if (scope_type == NULL) {
         Py_DECREF(names_tuple);
         return ERROR;
     }
-    PyObject *metadata = PyTuple_Pack(2, marker, names_tuple);
-    Py_DECREF(marker);
-    Py_DECREF(names_tuple);
-    if (metadata == NULL) {
+    PyObject *qualname_marker = PyUnicode_FromString(
+        "__annotationlib_qualname__");
+    if (qualname_marker == NULL) {
+        Py_DECREF(names_tuple);
+        Py_DECREF(scope_type);
         return ERROR;
     }
-    Py_ssize_t index = _PyCompile_AddConst(c, metadata);
-    Py_DECREF(metadata);
-    return index < 0 ? ERROR : SUCCESS;
+    PyObject *qualname_metadata = PyTuple_Pack(
+        4, qualname_marker, parent_qualname, scope_type, names_tuple);
+    Py_DECREF(qualname_marker);
+    Py_DECREF(scope_type);
+    Py_DECREF(names_tuple);
+    if (qualname_metadata == NULL) {
+        return ERROR;
+    }
+    Py_ssize_t index = _PyCompile_AddConst(c, qualname_metadata);
+    Py_DECREF(qualname_metadata);
+    if (index < 0) {
+        return ERROR;
+    }
+    return SUCCESS;
 }
 
 // Enter an annotation scope and emit the format-checking prologue.
@@ -786,10 +804,21 @@ codegen_setup_annotations_scope(compiler *c, location loc,
     _PyCompile_CodeUnitMetadata umd = {
         .u_posonlyargcount = 1,
     };
-    RETURN_IF_ERROR(
-        codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
-                            key, loc.lineno, NULL, &umd));
-    RETURN_IF_ERROR(codegen_add_annotation_scope_metadata(c));
+    int parent_scope_type = _PyCompile_ScopeType(c);
+    PySTEntryObject *parent_ste = SYMTABLE_ENTRY(c);
+    PyObject *parent_qualname = parent_scope_type == COMPILE_SCOPE_MODULE
+        ? Py_NewRef(Py_None)
+        : Py_NewRef(_PyCompile_Qualname(c));
+    int ret = codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
+                                  key, loc.lineno, NULL, &umd);
+    if (ret < 0) {
+        Py_DECREF(parent_qualname);
+        return ERROR;
+    }
+    ret = codegen_add_annotation_scope_metadata(
+        c, parent_qualname, parent_scope_type, parent_ste);
+    Py_DECREF(parent_qualname);
+    RETURN_IF_ERROR(ret);
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     _Py_DECLARE_STR(format, ".format");
