@@ -804,6 +804,8 @@ class _UnboundNamesDict(_GlobalsWithFallback):
 _BYPASS_CLASS_SCOPE_MARKER = "__annotationlib_bypass_class_scope__"
 _QUALNAME_MARKER = "__annotationlib_qualname__"
 _CLASS_SCOPE_LOOKUP = "__annotationlib_class_scope_lookup__"
+_EVAL_OUTER_NAME = "__annotationlib_outer__"
+_EVAL_FUNC_NAME = "__annotationlib_eval__"
 
 
 class _ClassScopeTransformer(ast.NodeTransformer):
@@ -886,24 +888,108 @@ def _annotation_scope_qualname(annotate):
     return None
 
 
-def _apply_lexical_qualname(code, lexical_qualname, *, is_root=True):
+def _replace_code_qualname(code, old_prefix, new_prefix):
     consts = tuple(
-        _apply_lexical_qualname(
-            const, lexical_qualname, is_root=False
-        )
+        _replace_code_qualname(const, old_prefix, new_prefix)
         if isinstance(const, types.CodeType)
         else const
         for const in code.co_consts
     )
     qualname = code.co_qualname
-    if not is_root and lexical_qualname:
-        qualname = f"{lexical_qualname}.{qualname}"
+    if qualname.startswith(old_prefix):
+        suffix = qualname[len(old_prefix):]
+        if new_prefix:
+            qualname = new_prefix + suffix
+        else:
+            qualname = suffix.removeprefix(".")
     return code.replace(co_consts=consts, co_qualname=qualname)
 
 
-def _eval_in_class_annotation_scope(
-    string, globals, class_locals, bypass_names, lexical_qualname
+def _eval_with_live_namespaces(
+    string,
+    globals,
+    cells,
+    lexical_qualname,
+    *,
+    class_scope_lookup=None,
+    bypass_class_scope=frozenset(),
 ):
+    """Evaluate an annotation while retaining its original namespaces.
+
+    A nested function is compiled so that names captured by the original
+    annotation function remain free variables backed by the same cells.
+    Names not captured remain global lookups against the original globals
+    dictionary. This also gives nested code objects a prefix that can be
+    replaced with the annotation's original lexical qualified name.
+    """
+    tree = ast.parse(_rewrite_star_unpack(string), mode="eval")
+    if class_scope_lookup is not None:
+        tree = _ClassScopeTransformer(bypass_class_scope).visit(tree)
+
+    cell_bindings = {} if cells is None else dict(cells)
+    for name, cell in tuple(cell_bindings.items()):
+        unmangled = _unmangle_private_name(name)
+        if unmangled is not None:
+            cell_bindings[unmangled] = cell
+    if class_scope_lookup is not None:
+        cell_bindings[_CLASS_SCOPE_LOOKUP] = types.CellType(class_scope_lookup)
+
+    assignments = [
+        ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())],
+            value=ast.Constant(None),
+        )
+        for name in cell_bindings
+    ]
+    evaluator = ast.FunctionDef(
+        name=_EVAL_FUNC_NAME,
+        args=ast.arguments(
+            posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]
+        ),
+        body=[ast.Return(tree.body)],
+        decorator_list=[],
+    )
+    outer = ast.FunctionDef(
+        name=_EVAL_OUTER_NAME,
+        args=ast.arguments(
+            posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]
+        ),
+        body=[
+            *assignments,
+            evaluator,
+            ast.Return(ast.Name(id=_EVAL_FUNC_NAME, ctx=ast.Load())),
+        ],
+        decorator_list=[],
+    )
+    module = ast.fix_missing_locations(ast.Module(body=[outer], type_ignores=[]))
+    module_code = compile(module, "<string>", "exec")
+    outer_code = next(
+        const
+        for const in module_code.co_consts
+        if isinstance(const, types.CodeType) and const.co_name == _EVAL_OUTER_NAME
+    )
+    evaluator_code = next(
+        const
+        for const in outer_code.co_consts
+        if isinstance(const, types.CodeType) and const.co_name == _EVAL_FUNC_NAME
+    )
+    synthetic_prefix = (
+        f"{_EVAL_OUTER_NAME}.<locals>.{_EVAL_FUNC_NAME}.<locals>"
+    )
+    evaluator_code = _replace_code_qualname(
+        evaluator_code, synthetic_prefix, lexical_qualname
+    )
+    closure = tuple(cell_bindings[name] for name in evaluator_code.co_freevars)
+    evaluator_func = types.FunctionType(
+        evaluator_code,
+        globals,
+        _EVAL_FUNC_NAME,
+        closure=closure or None,
+    )
+    return evaluator_func()
+
+
+def _eval_in_class_annotation_scope(string, globals, class_locals, bypass_names):
     tree = ast.parse(_rewrite_star_unpack(string), mode="eval")
     tree = _ClassScopeTransformer(bypass_names).visit(tree)
     ast.fix_missing_locations(tree)
@@ -925,10 +1011,7 @@ def _eval_in_class_annotation_scope(
     else:
         eval_globals = dict(globals)
     eval_globals[_CLASS_SCOPE_LOOKUP] = class_scope_lookup
-    code = compile(tree, "<string>", "eval")
-    if lexical_qualname is not None:
-        code = _apply_lexical_qualname(code, lexical_qualname)
-    return eval(code, globals=eval_globals)
+    return eval(compile(tree, "<string>", "eval"), globals=eval_globals)
 
 
 def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
@@ -974,6 +1057,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         env = dict(globals)
         globals_fallback = globals if type(globals) is not dict else None
     class_locals = None
+    live_class_locals = None
     unbound_names = frozenset()
 
     def add_to_ns(ns, name, value):
@@ -1000,6 +1084,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             except ValueError:
                 pass
             else:
+                live_class_locals = classdict
                 class_locals = {}
                 for name, value in classdict.items():
                     add_to_ns(class_locals, name, value)
@@ -1010,6 +1095,45 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             env = _GlobalsWithFallback(env, globals_fallback)
     elif globals_fallback is not None:
         env = _GlobalsWithFallback(env, globals_fallback)
+
+    live_class_scope_lookup = None
+    if lexical_qualname is not None and live_class_locals is not None:
+        class_aliases = {}
+        for name in live_class_locals:
+            unmangled = _unmangle_private_name(name)
+            if unmangled is not None:
+                class_aliases[unmangled] = name
+
+        cell_aliases = {} if cells is None else dict(cells)
+        for name, cell in tuple(cell_aliases.items()):
+            unmangled = _unmangle_private_name(name)
+            if unmangled is not None:
+                cell_aliases[unmangled] = cell
+
+        def live_class_scope_lookup(name):
+            class_name = class_aliases.get(name, name)
+            try:
+                return live_class_locals[class_name]
+            except KeyError:
+                pass
+            if name in cell_aliases:
+                try:
+                    return cell_aliases[name].cell_contents
+                except ValueError:
+                    raise NameError(
+                        f"cannot access free variable {name!r} where it is "
+                        "not associated with a value in enclosing scope",
+                        name=name,
+                    ) from None
+            try:
+                return globals[name]
+            except KeyError:
+                try:
+                    return getattr(builtins, name)
+                except AttributeError:
+                    raise NameError(
+                        _NAME_ERROR_MSG.format(name=name), name=name
+                    ) from None
 
     def make_fwdref(string):
         fwdref = ForwardRef(string, owner=owner, is_class=is_class)
@@ -1034,9 +1158,6 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             # values in the STRING format.
             return string
         fwdref = make_fwdref(string)
-        code = fwdref.__forward_code__
-        if lexical_qualname is not None:
-            code = _apply_lexical_qualname(code, lexical_qualname)
         if (
             string in unbound_names
             and not (class_locals is not None and string in class_locals)
@@ -1052,29 +1173,39 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
                 )
             return fwdref
         if format == Format.VALUE:
+            if lexical_qualname is not None and isinstance(globals, dict):
+                return _eval_with_live_namespaces(
+                    string,
+                    globals,
+                    cells,
+                    lexical_qualname,
+                    class_scope_lookup=live_class_scope_lookup,
+                    bypass_class_scope=bypass_class_scope,
+                )
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string,
-                    env,
-                    class_locals,
-                    bypass_class_scope,
-                    lexical_qualname,
+                    string, env, class_locals, bypass_class_scope
                 )
-            return eval(code, globals=env, locals=env)
+            return eval(fwdref.__forward_code__, globals=env, locals=env)
         # FORWARDREF. First try to evaluate the whole annotation; if that
         # fails, evaluate it again in an environment where every name
         # lookup produces a _Stringifier, so that unresolvable names embedded
         # in otherwise evaluatable annotations turn into ForwardRefs.
         try:
+            if lexical_qualname is not None and isinstance(globals, dict):
+                return _eval_with_live_namespaces(
+                    string,
+                    globals,
+                    cells,
+                    lexical_qualname,
+                    class_scope_lookup=live_class_scope_lookup,
+                    bypass_class_scope=bypass_class_scope,
+                )
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string,
-                    env,
-                    class_locals,
-                    bypass_class_scope,
-                    lexical_qualname,
+                    string, env, class_locals, bypass_class_scope
                 )
-            return eval(code, globals=env, locals=env)
+            return eval(fwdref.__forward_code__, globals=env, locals=env)
         except Exception:
             pass
         if string.isidentifier():
@@ -1089,7 +1220,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             format=Format.FORWARDREF,
         )
         try:
-            result = eval(code, stringifier_dict)
+            result = eval(fwdref.__forward_code__, stringifier_dict)
         except Exception:
             return fwdref
         stringifier_dict.transmogrify(cells)
