@@ -509,6 +509,19 @@ class DeferredEvaluationTests(unittest.TestCase):
         set_value(2)
         self.assertEqual(callback(), 2)
 
+        # This is truly sketchy.
+        ns = run_code("""
+            def munge():
+                C.value = 1
+                return int
+            class C:
+                value = 0
+                def func(x: tuple[munge(), value]):
+                    pass
+        """)
+        annotations = ns["C"].func.__annotations__
+        self.assertEqual(annotations["x"], tuple[int, 1])
+
     def test_nested_annotation_value_qualnames(self):
         ns = run_code("""
             module_value: lambda: None
