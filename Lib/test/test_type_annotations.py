@@ -493,6 +493,36 @@ class DeferredEvaluationTests(unittest.TestCase):
         """)
         self.assertEqual(ns["C"].__annotations__, {"__classdict__": int})
 
+    def test_class_annotation_private_01(self):
+        ns = run_code("""
+            class C:
+                __x = int
+                y: __x
+        """)
+        self.assertEqual(ns["C"].__annotations__, {"y": int})
+
+        ns = run_code("""
+            class C:
+                __x = int
+                def foo() -> __x:
+                    pass
+        """)
+        self.assertEqual(ns["C"].foo.__annotations__, {"return": int})
+
+    # FIXME: annotationlib strips the private stuff in an unprincipled way
+    @unittest.expectedFailure
+    def test_class_annotation_private_02(self):
+        ns = run_code("""
+            class C:
+                _D__x = int
+                y: __x
+        """)
+        with self.assertRaisesRegex(
+            NameError,
+            "name '_C__x' is not defined",
+        ):
+            ns["C"].__annotations__
+
     def test_future_annotations(self):
         code = """
         from __future__ import annotations
