@@ -2363,6 +2363,17 @@ class TestForwardRefClass(unittest.TestCase):
 
 
 class TestAnnotationLib(unittest.TestCase):
+    def test_mangle_private_name(self):
+        mangle = annotationlib._mangle_private_name
+        self.assertEqual(mangle("Foo", "__bar"), "_Foo__bar")
+        self.assertEqual(mangle("_Foo", "__bar"), "_Foo__bar")
+        self.assertEqual(mangle("__Foo", "__bar"), "_Foo__bar")
+        self.assertEqual(mangle("___", "__bar"), "__bar")
+        self.assertEqual(mangle("Foo", "bar"), "bar")
+        self.assertEqual(mangle("Foo", "__bar__"), "__bar__")
+        self.assertEqual(mangle("Foo", "__bar.baz"), "__bar.baz")
+        self.assertEqual(mangle(None, "__bar"), "__bar")
+
     def test__all__(self):
         support.check__all__(self, annotationlib)
 

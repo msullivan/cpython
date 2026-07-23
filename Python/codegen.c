@@ -742,10 +742,6 @@ codegen_add_annotation_scope_metadata(compiler *c)
             return ERROR;
         }
     }
-    if (PyList_GET_SIZE(global_names) == 0) {
-        Py_DECREF(global_names);
-        return SUCCESS;
-    }
     PyObject *global_names_tuple = PyList_AsTuple(global_names);
     Py_DECREF(global_names);
     if (global_names_tuple == NULL) {
@@ -756,7 +752,12 @@ codegen_add_annotation_scope_metadata(compiler *c)
         Py_DECREF(global_names_tuple);
         return ERROR;
     }
-    PyObject *metadata = PyTuple_Pack(2, marker, global_names_tuple);
+    PyObject *private = _PyCompile_Private(c);
+    if (!private) {
+        private = Py_None;
+    }
+    PyObject *metadata = PyTuple_Pack(
+        3, marker, private, global_names_tuple);
     Py_DECREF(marker);
     Py_DECREF(global_names_tuple);
     if (metadata == NULL) {

@@ -549,8 +549,6 @@ class DeferredEvaluationTests(unittest.TestCase):
         """)
         self.assertEqual(ns["C"].foo.__annotations__, {"return": int})
 
-    # FIXME: annotationlib strips the private stuff in an unprincipled way
-    @unittest.expectedFailure
     def test_class_annotation_private_02(self):
         ns = run_code("""
             class C:

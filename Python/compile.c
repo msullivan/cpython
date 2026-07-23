@@ -1374,6 +1374,12 @@ _PyCompile_Qualname(compiler *c)
     return c->u->u_metadata.u_qualname;
 }
 
+PyObject *
+_PyCompile_Private(compiler *c)
+{
+    return c->u->u_private;
+}
+
 _PyCompile_CodeUnitMetadata *
 _PyCompile_Metadata(compiler *c)
 {

@@ -864,18 +864,18 @@ class _ClassScopeTransformer(ast.NodeTransformer):
 def _get_annotate_metadata(annotate):
     code = getattr(annotate, "__code__", None)
     if code is None:
-        return frozenset()
+        return None, frozenset()
     for const in code.co_consts:
         if (
             isinstance(const, tuple)
-            and len(const) == 2
+            and len(const) == 3
             and const[0] == "__annotate_metadata__"
         ):
-            return frozenset(const[1])
-    return frozenset()
+            return const[1], frozenset(const[2])
+    return None, frozenset()
 
 
-def _eval_in_class_annotation_scope(string, globals, class_locals, bypass_names):
+def _eval_in_class_annotation_scope(string, globals, private_class_name, class_locals, bypass_names):
     tree = ast.parse(_rewrite_star_unpack(string), mode="eval")
     tree = _ClassScopeTransformer(bypass_names).visit(tree)
     ast.fix_missing_locations(tree)
@@ -890,6 +890,7 @@ def _eval_in_class_annotation_scope(string, globals, class_locals, bypass_names)
                 try:
                     return getattr(builtins, name)
                 except AttributeError:
+                    name = _mangle_private_name(private_class_name, name)
                     raise NameError(_NAME_ERROR_MSG.format(name=name), name=name)
 
     eval_globals = globals.copy()
@@ -919,7 +920,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         )
     else:
         cells = None
-    bypass_class_scope = _get_annotate_metadata(annotate)
+    private_class_name, bypass_class_scope = _get_annotate_metadata(annotate)
 
     # Build the evaluation environment. The globals are the function's
     # globals overlaid with the values of the closure cells, which take
@@ -929,7 +930,9 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     # the __classdict__ cell serves as the locals: it takes precedence
     # over everything else but, like real class scopes, is invisible to
     # lazily evaluated nested scopes (lambdas, comprehensions) inside
-    # the annotation. Names that were subject to private name mangling
+    # the annotation.
+
+    # Names that were subject to private name mangling
     # appear in the environment under their mangled name, but occur
     # unmangled in the annotation strings, so alias them.
 
@@ -942,7 +945,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
 
     def add_to_indir(indir, name):
         indir[name] = name
-        unmangled = _unmangle_private_name(name)
+        unmangled = _unmangle_private_name(private_class_name, name)
         if unmangled is not None:
             indir[unmangled] = name
 
@@ -1011,7 +1014,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         if format == Format.VALUE:
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string, env, class_locals, bypass_class_scope
+                    string, env, private_class_name, class_locals, bypass_class_scope
                 )
             return eval(fwdref.__forward_code__, globals=env, locals=env)
         # FORWARDREF. First try to evaluate the whole annotation; if that
@@ -1021,7 +1024,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         try:
             if class_locals is not None:
                 return _eval_in_class_annotation_scope(
-                    string, env, class_locals, bypass_class_scope
+                    string, env, private_class_name, class_locals, bypass_class_scope
                 )
             return eval(fwdref.__forward_code__, globals=env, locals=env)
         except Exception:
@@ -1065,14 +1068,25 @@ def _annotate_value(annotate, is_evaluate):
     )
 
 
-def _unmangle_private_name(name):
+def _unmangle_private_name(class_name, name):
     """Given a mangled name like '_Foo__bar', return '__bar'; else None."""
     if not name.startswith("_") or name.startswith("__"):
         return None
-    _, sep, private = name[1:].partition("__")
-    if not sep or not private:
+    prefix, sep, private = name[1:].partition("__")
+    if not sep or not private or prefix != class_name:
         return None
     return "__" + private
+
+
+def _mangle_private_name(class_name, name):
+    if class_name is None or not name.startswith("__"):
+        return name
+    if name.endswith("__") or "." in name:
+        return name
+    class_name = class_name.lstrip("_")
+    if not class_name:
+        return name
+    return f"_{class_name}{name}"
 
 
 def _stringify_single(anno):

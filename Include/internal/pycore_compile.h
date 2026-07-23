@@ -159,6 +159,7 @@ int _PyCompile_ScopeType(struct _PyCompiler *c);
 int _PyCompile_OptimizationLevel(struct _PyCompiler *c);
 int _PyCompile_LookupArg(struct _PyCompiler *c, PyCodeObject *co, PyObject *name);
 PyObject *_PyCompile_Qualname(struct _PyCompiler *c);
+PyObject *_PyCompile_Private(struct _PyCompiler *c);
 _PyCompile_CodeUnitMetadata *_PyCompile_Metadata(struct _PyCompiler *c);
 PyObject *_PyCompile_StaticAttributesAsTuple(struct _PyCompiler *c);
 
