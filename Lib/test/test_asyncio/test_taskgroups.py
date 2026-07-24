@@ -1292,6 +1292,15 @@ class BaseTestTaskGroup:
 
         self.assertEqual(get_error_types(cm.exception), {GeneratorExit, AssertionError})
 
+    async def test_taskgroup_generator_exit_05(self):
+        # The exception on a GeneratorExit should be both a
+        # GeneratorExit *and* a BaseExceptionGroup
+        with self.assertRaises(GeneratorExit) as cm:
+            async with asyncio.TaskGroup() as tg:
+                raise GeneratorExit
+
+        self.assertIsInstance(cm.exception, BaseExceptionGroup)
+
 
 class TestTaskGroup(BaseTestTaskGroup, unittest.IsolatedAsyncioTestCase):
     loop_factory = asyncio.EventLoop

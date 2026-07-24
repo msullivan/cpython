@@ -10,6 +10,18 @@ from . import futures
 from . import tasks
 
 
+class TaskGroupGeneratorExit(GeneratorExit, BaseExceptionGroup):
+    """A BaseExceptionGroup that is *also* a GeneratorExit.
+
+    Raised when the body of a TaskGroup raises GeneratorExit
+    and there are no other errors.
+
+    This allows TaskGroup to report this as a BaseExceptionGroup, like
+    most errors, while still signalling it as a GeneratorExit to an
+    enclosing generator.
+    """
+
+
 class TaskGroup:
     """Asynchronous context manager for managing groups of tasks.
 
@@ -173,24 +185,28 @@ class TaskGroup:
             if self._parent_task.cancelling():
                 self._parent_task.uncancel()
                 self._parent_task.cancel()
+
+            # If the *only* error is a GeneratorExit from the body of
+            # the group, then instead of raising an ExceptionGroup we
+            # raise TaskGroupGeneratorExit, which subtypes
+            # BaseExceptionGroup *and* a GeneratorExit. This ensures
+            # that async generators that use TaskGroup properly
+            # swallow the exception on `aclose()` while ensuring that
+            # no exceptions from subtasks are swallowed and that anything
+            # expecting a group gets one.
+            exc_cls = BaseExceptionGroup
+            if (
+                et is not None
+                and issubclass(et, GeneratorExit)
+                and len(self._errors) == 1
+            ):
+                exc_cls = TaskGroupGeneratorExit
+
             try:
-                # If the *only* error is a GeneratorExit from the body
-                # of the group, then instead of raising an
-                # ExceptionGroup we raise GeneratorExit. This ensures
-                # that async generators that use TaskGroup properly
-                # swallow the exception on `aclose()` while ensuring
-                # that no exceptions from subtasks are swallowed.
-                if (
-                    et is not None
-                    and issubclass(et, GeneratorExit)
-                    and len(self._errors) == 1
-                ):
-                    raise GeneratorExit
-                else:
-                    raise BaseExceptionGroup(
-                        'unhandled errors in a TaskGroup',
-                        self._errors,
-                    ) from None
+                raise exc_cls(
+                    'unhandled errors in a TaskGroup',
+                    self._errors,
+                ) from None
             finally:
                 exc = None
 
