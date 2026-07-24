@@ -2363,6 +2363,20 @@ class TestForwardRefClass(unittest.TestCase):
 
 
 class TestAnnotationLib(unittest.TestCase):
+    def test_mangle_private_attributes(self):
+        namespace = types.SimpleNamespace(
+            **{
+                "_C__value": int,
+                "_C__nested": types.SimpleNamespace(_C__value=str),
+            }
+        )
+
+        class C:
+            value: namespace.__value
+            nested: namespace.__nested.__value
+
+        self.assertEqual(C.__annotations__, {"value": int, "nested": str})
+
     def test_mangle_private_name(self):
         mangle = annotationlib._mangle_private_name
         self.assertEqual(mangle("Foo", "__bar"), "_Foo__bar")

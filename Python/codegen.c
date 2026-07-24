@@ -756,10 +756,23 @@ codegen_add_annotation_scope_metadata(compiler *c)
     if (!private) {
         private = Py_None;
     }
+    PyObject *mangled_names;
+    if (SYMTABLE_ENTRY(c)->ste_mangled_names == NULL) {
+        mangled_names = Py_NewRef(Py_None);
+    }
+    else {
+        mangled_names = PyFrozenSet_New(SYMTABLE_ENTRY(c)->ste_mangled_names);
+        if (mangled_names == NULL) {
+            Py_DECREF(marker);
+            Py_DECREF(global_names_tuple);
+            return ERROR;
+        }
+    }
     PyObject *metadata = PyTuple_Pack(
-        3, marker, private, global_names_tuple);
+        4, marker, private, global_names_tuple, mangled_names);
     Py_DECREF(marker);
     Py_DECREF(global_names_tuple);
+    Py_DECREF(mangled_names);
     if (metadata == NULL) {
         return ERROR;
     }

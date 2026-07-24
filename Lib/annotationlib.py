@@ -779,28 +779,6 @@ class _CellMapping(collections.abc.Mapping):
         return len(self.closure)
 
 
-# XXX: The thing we use this for is just wrong, though, and isn't
-# and can't be right.
-class _IndirectionMapping(collections.abc.Mapping):
-    """A mapping that holds cells and dereferences them on access."""
-
-    __slots__ = ("indirection", "map")
-
-    def __init__(self, indirection, map):
-        self.indirection = indirection
-        self.map = map
-
-    def __getitem__(self, key):
-        key = self.indirection[key]
-        return self.map[key]
-
-    def __iter__(self):
-        return iter(self.indirection)
-
-    def __len__(self):
-        return len(self.indirection)
-
-
 class _GlobalsWithFallback(dict):
     """A globals overlay that preserves a dict subclass's __missing__."""
 
@@ -820,6 +798,34 @@ class _GlobalsWithFallback(dict):
 
 
 _CLASS_SCOPE_LOOKUP = "__annotationlib_class_scope_lookup__"
+
+
+class _AnnotateMetadata:
+    __slots__ = ("private_class_name", "global_names", "mangled_names")
+
+    def __init__(self, private_class_name=None, global_names=(), mangled_names=None):
+        self.private_class_name = private_class_name
+        self.global_names = frozenset(global_names)
+        self.mangled_names = (
+            None if mangled_names is None else frozenset(mangled_names)
+        )
+
+
+class _MangleTransformer(ast.NodeTransformer):
+    def __init__(self, class_name, mangled_names):
+        self.class_name = class_name
+        self.mangled_names = mangled_names
+
+    def visit_Name(self, node):
+        if self.mangled_names is None or node.id in self.mangled_names:
+            node.id = _mangle_private_name(self.class_name, node.id)
+        return node
+
+    def visit_Attribute(self, node):
+        self.generic_visit(node)
+        if self.mangled_names is None or node.attr in self.mangled_names:
+            node.attr = _mangle_private_name(self.class_name, node.attr)
+        return node
 
 
 class _ClassScopeTransformer(ast.NodeTransformer):
@@ -864,22 +870,28 @@ class _ClassScopeTransformer(ast.NodeTransformer):
 def _get_annotate_metadata(annotate):
     code = getattr(annotate, "__code__", None)
     if code is None:
-        return None, frozenset()
+        return _AnnotateMetadata()
     for const in code.co_consts:
         if (
             isinstance(const, tuple)
-            and len(const) == 3
+            and len(const) == 4
             and const[0] == "__annotate_metadata__"
         ):
-            return const[1], frozenset(const[2])
-    return None, frozenset()
+            return _AnnotateMetadata(const[1], const[2], const[3])
+    return _AnnotateMetadata()
 
 
-def _eval_in_class_annotation_scope(string, globals, private_class_name, class_locals, bypass_names):
+def _eval_in_class_annotation_scope(
+    string, globals, metadata, class_locals
+):
     tree = ast.parse(_rewrite_star_unpack(string), mode="eval")
-    tree = _ClassScopeTransformer(bypass_names).visit(tree)
+    tree = _MangleTransformer(
+        metadata.private_class_name, metadata.mangled_names
+    ).visit(tree)
+    tree = _ClassScopeTransformer(metadata.global_names).visit(tree)
     ast.fix_missing_locations(tree)
 
+    class_locals = class_locals or {}
     def class_scope_lookup(name):
         try:
             return class_locals[name]
@@ -890,7 +902,6 @@ def _eval_in_class_annotation_scope(string, globals, private_class_name, class_l
                 try:
                     return getattr(builtins, name)
                 except AttributeError:
-                    name = _mangle_private_name(private_class_name, name)
                     raise NameError(_NAME_ERROR_MSG.format(name=name), name=name)
 
     eval_globals = globals.copy()
@@ -920,7 +931,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         )
     else:
         cells = None
-    private_class_name, bypass_class_scope = _get_annotate_metadata(annotate)
+    metadata = _get_annotate_metadata(annotate)
 
     # Build the evaluation environment. The globals are the function's
     # globals overlaid with the values of the closure cells, which take
@@ -943,22 +954,15 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     class_locals = None
     unbound_names = frozenset()
 
-    def add_to_indir(indir, name):
-        indir[name] = name
-        unmangled = _unmangle_private_name(private_class_name, name)
-        if unmangled is not None:
-            indir[unmangled] = name
-
     if cells is not None:
-        indir = {}
-        unbound = set()
-        for name in cells:
+        pruned_cells = {}
+        for name, value in cells.items():
             # shit how does __conditional_annotations__ work again!!!
             if name in ("__classdict__", "__conditional_annotations__"):
                 continue
-            add_to_indir(indir, name)
+            pruned_cells[name] = value
 
-        env.maps.insert(0, _IndirectionMapping(indir, _CellMapping(cells)))
+        env.maps.insert(0, _CellMapping(pruned_cells))
 
         if "__classdict__" in cells:
             try:
@@ -966,10 +970,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             except ValueError:
                 pass
             else:
-                indir = {}
-                for name in classdict:
-                    add_to_indir(indir, name)
-                class_locals = _IndirectionMapping(indir, classdict)
+                class_locals = classdict
 
     if not isinstance(env, dict):
         env = _GlobalsWithFallback({}, env)
@@ -1012,9 +1013,12 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
                 )
             return fwdref
         if format == Format.VALUE:
-            if class_locals is not None:
+            if class_locals is not None or metadata.private_class_name:
                 return _eval_in_class_annotation_scope(
-                    string, env, private_class_name, class_locals, bypass_class_scope
+                    string,
+                    env,
+                    metadata,
+                    class_locals,
                 )
             return eval(fwdref.__forward_code__, globals=env, locals=env)
         # FORWARDREF. First try to evaluate the whole annotation; if that
@@ -1022,9 +1026,12 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         # lookup produces a _Stringifier, so that unresolvable names embedded
         # in otherwise evaluatable annotations turn into ForwardRefs.
         try:
-            if class_locals is not None:
+            if class_locals is not None or metadata.private_class_name:
                 return _eval_in_class_annotation_scope(
-                    string, env, private_class_name, class_locals, bypass_class_scope
+                    string,
+                    env,
+                    metadata,
+                    class_locals,
                 )
             return eval(fwdref.__forward_code__, globals=env, locals=env)
         except Exception:
@@ -1066,16 +1073,6 @@ def _annotate_value(annotate, is_evaluate):
     return _eval_string_annotate(
         annotate, Format.VALUE, None, _is_evaluate=is_evaluate
     )
-
-
-def _unmangle_private_name(class_name, name):
-    """Given a mangled name like '_Foo__bar', return '__bar'; else None."""
-    if not name.startswith("_") or name.startswith("__"):
-        return None
-    prefix, sep, private = name[1:].partition("__")
-    if not sep or not private or prefix != class_name:
-        return None
-    return "__" + private
 
 
 def _mangle_private_name(class_name, name):
