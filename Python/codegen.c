@@ -747,14 +747,19 @@ codegen_add_annotation_scope_metadata(compiler *c)
     if (global_names_tuple == NULL) {
         return ERROR;
     }
-    PyObject *marker = PyUnicode_FromString("__annotate_metadata__");
-    if (marker == NULL) {
-        Py_DECREF(global_names_tuple);
-        return ERROR;
-    }
     PyObject *private = _PyCompile_Private(c);
     if (!private) {
         private = Py_None;
+    }
+    // Only annotations in a class scope need any of this, so most scopes
+    // record nothing at all. annotationlib assumes exactly these defaults
+    // when the constant is absent, so leave it out rather than pay for it in
+    // every __annotate__ in the module.
+    if (private == Py_None
+        && SYMTABLE_ENTRY(c)->ste_mangled_names == NULL
+        && PyTuple_GET_SIZE(global_names_tuple) == 0) {
+        Py_DECREF(global_names_tuple);
+        return SUCCESS;
     }
     PyObject *mangled_names;
     if (SYMTABLE_ENTRY(c)->ste_mangled_names == NULL) {
@@ -763,10 +768,15 @@ codegen_add_annotation_scope_metadata(compiler *c)
     else {
         mangled_names = PyFrozenSet_New(SYMTABLE_ENTRY(c)->ste_mangled_names);
         if (mangled_names == NULL) {
-            Py_DECREF(marker);
             Py_DECREF(global_names_tuple);
             return ERROR;
         }
+    }
+    PyObject *marker = PyUnicode_FromString("__annotate_metadata__");
+    if (marker == NULL) {
+        Py_DECREF(mangled_names);
+        Py_DECREF(global_names_tuple);
+        return ERROR;
     }
     PyObject *metadata = PyTuple_Pack(
         4, marker, private, global_names_tuple, mangled_names);
