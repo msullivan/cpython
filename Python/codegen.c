@@ -1218,7 +1218,7 @@ codegen_visit_annexpr(compiler *c, expr_ty annotation)
 
 static int
 codegen_argannotation(compiler *c, identifier id,
-    expr_ty annotation, Py_ssize_t *annotations_len, location loc)
+    expr_ty annotation, PyObject *annotations, location loc)
 {
     if (!annotation) {
         return SUCCESS;
@@ -1227,32 +1227,20 @@ codegen_argannotation(compiler *c, identifier id,
     if (!mangled) {
         return ERROR;
     }
-    ADDOP_LOAD_CONST(c, loc, mangled);
+    PyObject *ann_str = _PyAST_ExprAsUnicode(annotation);
+    if (ann_str == NULL) {
+        Py_DECREF(mangled);
+        return ERROR;
+    }
+    int res = PyDict_SetItem(annotations, mangled, ann_str);
     Py_DECREF(mangled);
-
-    if (1 || FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
-        VISIT(c, annexpr, annotation);
-    }
-    else {
-        if (annotation->kind == Starred_kind) {
-            // *args: *Ts (where Ts is a TypeVarTuple).
-            // Do [annotation_value] = [*Ts].
-            // (Note that in theory we could end up here even for an argument
-            // other than *args, but in practice the grammar doesn't allow it.)
-            VISIT(c, expr, annotation->v.Starred.value);
-            ADDOP_I(c, loc, UNPACK_SEQUENCE, (Py_ssize_t) 1);
-        }
-        else {
-            VISIT(c, expr, annotation);
-        }
-    }
-    *annotations_len += 1;
-    return SUCCESS;
+    Py_DECREF(ann_str);
+    return res < 0 ? ERROR : SUCCESS;
 }
 
 static int
 codegen_argannotations(compiler *c, asdl_arg_seq* args,
-                       Py_ssize_t *annotations_len, location loc)
+                       PyObject *annotations, location loc)
 {
     int i;
     for (i = 0; i < asdl_seq_LEN(args); i++) {
@@ -1262,7 +1250,7 @@ codegen_argannotations(compiler *c, asdl_arg_seq* args,
                         c,
                         arg->arg,
                         arg->annotation,
-                        annotations_len,
+                        annotations,
                         loc));
     }
     return SUCCESS;
@@ -1271,31 +1259,31 @@ codegen_argannotations(compiler *c, asdl_arg_seq* args,
 static int
 codegen_annotations_in_scope(compiler *c, location loc,
                              arguments_ty args, expr_ty returns,
-                             Py_ssize_t *annotations_len)
+                             PyObject *annotations)
 {
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->posonlyargs, annotations_len, loc));
+        codegen_argannotations(c, args->posonlyargs, annotations, loc));
 
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->args, annotations_len, loc));
+        codegen_argannotations(c, args->args, annotations, loc));
 
     if (args->vararg && args->vararg->annotation) {
         RETURN_IF_ERROR(
             codegen_argannotation(c, args->vararg->arg,
-                                     args->vararg->annotation, annotations_len, loc));
+                                     args->vararg->annotation, annotations, loc));
     }
 
     RETURN_IF_ERROR(
-        codegen_argannotations(c, args->kwonlyargs, annotations_len, loc));
+        codegen_argannotations(c, args->kwonlyargs, annotations, loc));
 
     if (args->kwarg && args->kwarg->annotation) {
         RETURN_IF_ERROR(
             codegen_argannotation(c, args->kwarg->arg,
-                                     args->kwarg->annotation, annotations_len, loc));
+                                     args->kwarg->annotation, annotations, loc));
     }
 
     RETURN_IF_ERROR(
-        codegen_argannotation(c, &_Py_ID(return), returns, annotations_len, loc));
+        codegen_argannotation(c, &_Py_ID(return), returns, annotations, loc));
 
     return 0;
 }
@@ -1309,20 +1297,44 @@ codegen_function_annotations(compiler *c, location loc,
 
        Return -1 on error, or a combination of flags to add to the function.
        */
-    Py_ssize_t annotations_len = 0;
+    /* Py_ssize_t annotations_len = 0; */
 
     PySTEntryObject *ste;
     RETURN_IF_ERROR(_PySymtable_LookupOptional(SYMTABLE(c), args, &ste));
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
+        PyObject *annotations = PyDict_New();
+        if (annotations == NULL) {
+            Py_DECREF(ste);
+            return ERROR;
+        }
         int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, false);
         Py_DECREF(ste);
-        RETURN_IF_ERROR(err);
-        RETURN_IF_ERROR_IN_SCOPE(
-            c, codegen_annotations_in_scope(c, loc, args, returns, &annotations_len)
-        );
-        ADDOP_I(c, loc, BUILD_MAP, annotations_len);
+        if (err < 0) {
+            Py_DECREF(annotations);
+            return ERROR;
+        }
+        // In the annotation scope from here on: every failure has to leave it.
+        if (codegen_annotations_in_scope(c, loc, args, returns, annotations) < 0) {
+            Py_DECREF(annotations);
+            _PyCompile_ExitScope(c);
+            return ERROR;
+        }
+        // The annotations are all constant strings, so the whole mapping can
+        // be one constant. __annotate__ must hand out a real dict that the
+        // caller may mutate, so copy it: three instructions no matter how
+        // many annotations there are. BUILD_MAP goes first so that a failure
+        // there cannot leak the frozendict.
+        ADDOP_I_IN_SCOPE(c, loc, BUILD_MAP, 0);
+        PyObject *frozen = PyFrozenDict_New(annotations);
+        Py_DECREF(annotations);
+        if (frozen == NULL) {
+            _PyCompile_ExitScope(c);
+            return ERROR;
+        }
+        ADDOP_LOAD_CONST_NEW(c, loc, frozen);
+        ADDOP_I_IN_SCOPE(c, loc, DICT_UPDATE, 1);
         RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc));
         return MAKE_FUNCTION_ANNOTATE;
     }
