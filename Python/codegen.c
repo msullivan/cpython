@@ -706,6 +706,15 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
     return SUCCESS;
 }
 
+// Set to 1 to restore the eager handling of class and module annotations under
+// "from __future__ import annotations": the annotation strings are stored
+// straight into __annotations__ by the class or module body and no __annotate__
+// function is generated at all. Classes and modules now always get an
+// __annotate__, like functions, but the eager path is kept here because it
+// produces measurably smaller .pyc files -- it needs no annotate function, no
+// closure and no format-checking prologue.
+#define EAGER_FUTURE_ANNOTATIONS 0
+
 static int
 codegen_compare_format(compiler *c, location loc, int compare_op, long format)
 {
@@ -1047,11 +1056,12 @@ _PyCodegen_Module(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_inter
 int
 codegen_body(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_interactive)
 {
-    /* If from __future__ import annotations is active,
-     * every annotated class and module should have __annotations__.
-     * Else __annotate__ is created when necessary. */
     PySTEntryObject *ste = SYMTABLE_ENTRY(c);
-    if ((FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) && ste->ste_annotations_used) {
+    if (EAGER_FUTURE_ANNOTATIONS
+        && (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)
+        && ste->ste_annotations_used) {
+        /* Every annotated class and module gets an eager __annotations__
+         * for codegen_annassign to store the annotation strings into. */
         ADDOP(c, loc, SETUP_ANNOTATIONS);
     }
     if (!asdl_seq_LEN(stmts)) {
@@ -1080,12 +1090,13 @@ codegen_body(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_interactiv
     for (Py_ssize_t i = first_instr; i < asdl_seq_LEN(stmts); i++) {
         VISIT(c, stmt, (stmt_ty)asdl_seq_GET(stmts, i));
     }
-    // If there are annotations and the future import is not on, we
-    // collect the annotations in a separate pass and generate an
-    // __annotate__ function. See PEP 649.
-    if (!(FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)) {
-        RETURN_IF_ERROR(codegen_process_deferred_annotations(c, loc));
-    }
+    // Annotations are collected in a separate pass and turned into an
+    // __annotate__ function, so that classes and modules are lazy in the same
+    // way functions are. See PEP 649. Under "from __future__ import
+    // annotations" the function returns the annotation strings for every
+    // format, preserving PEP 563 semantics. (With EAGER_FUTURE_ANNOTATIONS
+    // there is nothing deferred to collect and this is a no-op.)
+    RETURN_IF_ERROR(codegen_process_deferred_annotations(c, loc));
     return SUCCESS;
 }
 
@@ -5888,8 +5899,6 @@ codegen_annassign(compiler *c, stmt_ty s)
 {
     location loc = LOC(s);
     expr_ty targ = s->v.AnnAssign.target;
-    bool future_annotations = FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS;
-    PyObject *mangled;
 
     assert(s->kind == AnnAssign_kind);
 
@@ -5904,7 +5913,9 @@ codegen_annassign(compiler *c, stmt_ty s)
         if (s->v.AnnAssign.simple &&
             (SCOPE_TYPE(c) == COMPILE_SCOPE_MODULE ||
              SCOPE_TYPE(c) == COMPILE_SCOPE_CLASS)) {
-            if (future_annotations) {
+            if (EAGER_FUTURE_ANNOTATIONS
+                && (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)) {
+                PyObject *mangled;
                 VISIT(c, annexpr, s->v.AnnAssign.annotation);
                 ADDOP_NAME(c, loc, LOAD_NAME, &_Py_ID(__annotations__), names);
                 mangled = _PyCompile_MaybeMangle(c, targ->v.Name.id);

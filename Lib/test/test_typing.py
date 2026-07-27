@@ -8931,9 +8931,9 @@ class TypedDictTests(BaseTestCase):
                          frozenset({"year"}))
 
         self.assertEqual(_typed_dict_helper.VeryAnnotated.__required_keys__,
-                         frozenset())
-        self.assertEqual(_typed_dict_helper.VeryAnnotated.__optional_keys__,
                          frozenset({"a"}))
+        self.assertEqual(_typed_dict_helper.VeryAnnotated.__optional_keys__,
+                         frozenset())
 
         self.assertEqual(AnnotatedMovie.__required_keys__,
                          frozenset({"title"}))

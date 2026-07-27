@@ -1829,7 +1829,9 @@ class TestGetAnnotateFromClassNamespace(unittest.TestCase):
             from __future__ import annotations
 
             class HasFutureAnnotations(metaclass=Meta):
-                expected_annotate = False
+                # Classes get an __annotate__ under PEP 563 too; it returns
+                # the annotation strings for every format.
+                expected_annotate = True
                 a: int
         """
         exec(textwrap.dedent(code), {"Meta": Meta})
