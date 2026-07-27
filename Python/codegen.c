@@ -816,7 +816,7 @@ codegen_add_annotation_scope_metadata(compiler *c)
 //     if .format != VALUE and .format != STRING: raise NotImplementedError
 static int
 codegen_setup_annotations_scope(compiler *c, location loc,
-                                void *key, PyObject *name, expr_ty value_expr)
+                                void *key, PyObject *name, bool is_evaluate_function)
 {
     _PyCompile_CodeUnitMetadata umd = {
         .u_posonlyargcount = 1,
@@ -830,7 +830,7 @@ codegen_setup_annotations_scope(compiler *c, location loc,
     _Py_DECLARE_STR(format, ".format");
     NEW_JUMP_TARGET_LABEL(c, body);
 
-    if (value_expr != NULL
+    if (is_evaluate_function
         || !(FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)) {
         // if .format == VALUE:
         //     return annotationlib._annotate_value(<this function>)
@@ -840,7 +840,7 @@ codegen_setup_annotations_scope(compiler *c, location loc,
         ADDOP_JUMP(c, loc, POP_JUMP_IF_FALSE, not_value);
         // Tell the intrinsic whether this is an evaluate function. It uses
         // tstate->current_frame to obtain the function itself.
-        ADDOP_LOAD_CONST(c, loc, value_expr != NULL ? Py_True : Py_False);
+        ADDOP_LOAD_CONST(c, loc, is_evaluate_function ? Py_True : Py_False);
         ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_ANNOTATE_VALUE);
         ADDOP(c, loc, RETURN_VALUE);
         USE_LABEL(c, not_value);
@@ -1003,7 +1003,7 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     void *key = (void *)((uintptr_t)ste->ste_id + 1);
     if (codegen_setup_annotations_scope(c, loc, key,
-                                        ste->ste_annotation_block->ste_name, NULL) < 0) {
+                                        ste->ste_annotation_block->ste_name, false) < 0) {
         goto error;
     }
     if (codegen_deferred_annotations_body(c, loc, deferred_anno,
@@ -1316,7 +1316,7 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, NULL);
+        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, false);
         Py_DECREF(ste);
         RETURN_IF_ERROR(err);
         RETURN_IF_ERROR_IN_SCOPE(
@@ -1398,7 +1398,7 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
 {
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, e));
+    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true));
     ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
     ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
@@ -1902,7 +1902,7 @@ codegen_typealias_body(compiler *c, stmt_ty s)
     ADDOP_LOAD_CONST_NEW(c, loc, defaults);
     RETURN_IF_ERROR(
         codegen_setup_annotations_scope(c, LOC(s), s, name,
-                                        s->v.TypeAlias.value));
+                                        true));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
