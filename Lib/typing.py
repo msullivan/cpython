@@ -3269,7 +3269,7 @@ class _TypedDictMeta(type):
                     own_annotate, format, owner=tp_dict)
                 if format != annotationlib.Format.STRING:
                     own = {
-                        n: _type_check(tp, msg, module=tp_dict.__module__)
+                        n: _type_check(tp, msg, owner=tp_dict, module=tp_dict.__module__)
                         for n, tp in own.items()
                     }
             elif format == annotationlib.Format.STRING:
