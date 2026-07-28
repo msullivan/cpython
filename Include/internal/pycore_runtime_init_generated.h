@@ -1305,7 +1305,6 @@ extern "C" {
 }
 
 #define _Py_str_literals_INIT { \
-    INIT_STR(annos, ".annos"), \
     INIT_STR(anon_dictcomp, "<dictcomp>"), \
     INIT_STR(anon_genexpr, "<genexpr>"), \
     INIT_STR(anon_lambda, "<lambda>"), \
@@ -1563,6 +1562,7 @@ extern "C" {
     INIT_ID(_showwarnmsg), \
     INIT_ID(_shutdown), \
     INIT_ID(_slotnames), \
+    INIT_ID(_string_annotations), \
     INIT_ID(_strptime), \
     INIT_ID(_strptime_datetime_date), \
     INIT_ID(_strptime_datetime_datetime), \

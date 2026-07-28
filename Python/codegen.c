@@ -784,24 +784,23 @@ codegen_add_annotation_scope_metadata(compiler *c)
 }
 
 // Enter an annotation scope and emit its entire body, which is a single
-// intrinsic call. The caller only has to push the defaults tuple beforehand and
-// close the scope afterwards.
+// intrinsic call. The caller only has to close the scope afterwards and then
+// attach the annotation source strings with INTRINSIC_SET_STRING_ANNOTATIONS.
 //
 // Both __annotate__ scopes and evaluate function scopes (type alias values,
-// type param bounds and defaults) work this way: the annotation source strings
-// are the second parameter, ".annos", which the enclosing scope defaults to a
-// dict of them for __annotate__ and to a single string for an evaluate
-// function. The intrinsic implements the whole protocol -- both formats, the
-// NotImplementedError, and PEP 563's string-valued VALUE -- reading .annos and
-// the executing function out of the frame. See annotate_impl() in
-// Python/intrinsics.c.
+// type param bounds and defaults) work this way: the strings live in the
+// function's _string_annotations attribute -- a dict of them for __annotate__,
+// a single one for an evaluate function -- so the signature stays (format, /).
+// The intrinsic implements the whole protocol: both formats, the
+// NotImplementedError, and PEP 563's string-valued VALUE. See annotate_impl()
+// in Python/intrinsics.c.
 static int
 codegen_setup_annotations_scope(compiler *c, location loc,
                                 void *key, PyObject *name,
                                 bool is_evaluate_function)
 {
     _PyCompile_CodeUnitMetadata umd = {
-        .u_posonlyargcount = 2,
+        .u_posonlyargcount = 1,
     };
     RETURN_IF_ERROR(
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
@@ -810,9 +809,9 @@ codegen_setup_annotations_scope(compiler *c, location loc,
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
-    // return <intrinsic>(.format), parameter 0. PEP 563 is distinguished by
-    // the CO_FUTURE_ANNOTATIONS flag on this code object, so the intrinsic
-    // needs no operand for it.
+    // return <intrinsic>(.format), the only parameter. PEP 563 is
+    // distinguished by the CO_FUTURE_ANNOTATIONS flag on this code object, so
+    // the intrinsic needs no operand for it.
     ADDOP_I(c, loc, LOAD_FAST, 0);
     ADDOP_I(c, loc, CALL_INTRINSIC_1,
             is_evaluate_function ? INTRINSIC_EVALUATE : INTRINSIC_ANNOTATE);
@@ -843,19 +842,7 @@ codegen_rename_annotations_format_param(PyCodeObject *co)
             Py_DECREF(new_names);
             return ERROR;
         }
-        // Same for the ".annos" parameter: inspect.signature() rejects a
-        // parameter whose name is not an identifier.
-        if (_PyUnicode_EqualToASCIIString(item, ".annos")) {
-            item = PyUnicode_FromString("annos");
-            if (item == NULL) {
-                Py_DECREF(new_names);
-                return ERROR;
-            }
-        }
-        else {
-            Py_INCREF(item);
-        }
-        PyTuple_SET_ITEM(new_names, i, item);
+        PyTuple_SET_ITEM(new_names, i, Py_NewRef(item));
     }
     Py_SETREF(co->co_localsplusnames, new_names);
     return SUCCESS;
@@ -885,8 +872,8 @@ codegen_leave_annotations_scope(compiler *c, location loc, Py_ssize_t flags)
 // Build the __annotate__ function for a class or module body. The annotations
 // themselves are not in it: the body stringifies each one where it appears and
 // stores it into __conditional_annotations__ (see codegen_annassign), and that
-// dict is handed to __annotate__ as the default for its ".annos" parameter, so
-// all the function has to do is give it back.
+// dict becomes __annotate__'s _string_annotations, so all the function has to
+// do is give it back.
 static int
 codegen_process_deferred_annotations(compiler *c, location loc)
 {
@@ -908,20 +895,17 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     assert(ste->ste_has_conditional_annotations);
 
-    // The defaults tuple, which MAKE_FUNCTION picks up below.
+    void *key = (void *)((uintptr_t)ste->ste_id + 1);
+    RETURN_IF_ERROR(codegen_setup_annotations_scope(
+        c, loc, key, ste->ste_annotation_block->ste_name, false));
+    RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc, 0));
     if (scope_type == COMPILE_SCOPE_CLASS) {
         ADDOP_NAME(c, loc, LOAD_DEREF, &_Py_ID(__conditional_annotations__), cellvars);
     }
     else {
         ADDOP_NAME(c, loc, LOAD_NAME, &_Py_ID(__conditional_annotations__), names);
     }
-    ADDOP_I(c, loc, BUILD_TUPLE, 1);
-
-    void *key = (void *)((uintptr_t)ste->ste_id + 1);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(
-        c, loc, key, ste->ste_annotation_block->ste_name, false));
-    RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc,
-                                                   MAKE_FUNCTION_DEFAULTS));
+    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
     RETURN_IF_ERROR(codegen_nameop(
         c, loc,
         ste->ste_type == ClassBlock ? &_Py_ID(__annotate_func__) : &_Py_ID(__annotate__),
@@ -1196,12 +1180,11 @@ codegen_collect_annotations(compiler *c, location loc,
     return 0;
 }
 
-/* Collect the annotations into one frozendict constant and push it, wrapped in
-   a defaults tuple, in the enclosing scope. __annotate__ picks it up as the
-   default of its ".annos" parameter. */
+/* Collect the annotations into one frozendict constant and push a real dict
+   copy of it, to become __annotate__'s _string_annotations. */
 static int
-codegen_push_annotation_defaults(compiler *c, location loc,
-                                 arguments_ty args, expr_ty returns)
+codegen_push_annotation_strings(compiler *c, location loc,
+                                arguments_ty args, expr_ty returns)
 {
     // Emitted before anything is allocated, so that no failure below can leak
     // the frozendict.
@@ -1220,10 +1203,9 @@ codegen_push_annotation_defaults(compiler *c, location loc,
         return ERROR;
     }
     // Copy the constant into a real dict here, at definition time, so that
-    // __annotate__ only has to hand out its parameter.
+    // __annotate__ only has to hand out what it was given.
     ADDOP_LOAD_CONST_NEW(c, loc, frozen);
     ADDOP_I(c, loc, DICT_UPDATE, 1);
-    ADDOP_I(c, loc, BUILD_TUPLE, 1);
     return SUCCESS;
 }
 
@@ -1243,17 +1225,14 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        int err = codegen_push_annotation_defaults(c, loc, args, returns);
-        if (err < 0) {
-            Py_DECREF(ste);
-            return ERROR;
-        }
-        err = codegen_setup_annotations_scope(c, loc, (void *)args,
-                                             ste->ste_name, false);
+        int err = codegen_setup_annotations_scope(c, loc, (void *)args,
+                                                 ste->ste_name, false);
         Py_DECREF(ste);
         RETURN_IF_ERROR(err);
-        RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc,
-                                                       MAKE_FUNCTION_DEFAULTS));
+        RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc, 0));
+        RETURN_IF_ERROR(
+            codegen_push_annotation_strings(c, loc, args, returns));
+        ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
         return MAKE_FUNCTION_ANNOTATE;
     }
     else {
@@ -1322,26 +1301,14 @@ codegen_wrap_in_stopiteration_handler(compiler *c)
     return SUCCESS;
 }
 
-// The defaults for an evaluate function: VALUE for .format, and the annotation
-// source for .annos, which the intrinsic hands back out or evaluates.
-static int
-codegen_push_evaluate_defaults(compiler *c, location loc, expr_ty value)
-{
-    PyObject *source = _PyAST_ExprAsUnicode(value);
-    if (source == NULL) {
-        return ERROR;
-    }
-    PyObject *defaults = PyTuple_Pack(2, _PyLong_GetOne(), source);
-    Py_DECREF(source);
-    ADDOP_LOAD_CONST_NEW(c, loc, defaults);
-    return SUCCESS;
-}
-
 static int
 codegen_type_param_bound_or_default(compiler *c, expr_ty e,
                                     identifier name, void *key)
 {
-    RETURN_IF_ERROR(codegen_push_evaluate_defaults(c, LOC(e), e));
+    // (VALUE,): the default for .format, so that the evaluate function can be
+    // called with no arguments at all.
+    PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
+    ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
     RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true));
     ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
@@ -1356,6 +1323,8 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
     int ret = codegen_make_closure(c, LOC(e), co, MAKE_FUNCTION_DEFAULTS);
     Py_DECREF(co);
     RETURN_IF_ERROR(ret);
+    ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
+    ADDOP_I(c, LOC(e), CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
     return SUCCESS;
 }
 
@@ -1841,8 +1810,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
 {
     location loc = LOC(s);
     PyObject *name = s->v.TypeAlias.name->v.Name.id;
-    RETURN_IF_ERROR(
-        codegen_push_evaluate_defaults(c, loc, s->v.TypeAlias.value));
+    PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
+    ADDOP_LOAD_CONST_NEW(c, loc, defaults);
     RETURN_IF_ERROR(
         codegen_setup_annotations_scope(c, LOC(s), s, name, true));
 
@@ -1860,6 +1829,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
     int ret = codegen_make_closure(c, loc, co, MAKE_FUNCTION_DEFAULTS);
     Py_DECREF(co);
     RETURN_IF_ERROR(ret);
+    ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
+    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
 
     ADDOP_I(c, loc, BUILD_TUPLE, 3);
     ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_TYPEALIAS);

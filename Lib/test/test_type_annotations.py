@@ -456,10 +456,6 @@ class DeferredEvaluationTests(unittest.TestCase):
         ns = run_code("class X: int[str]: int")
         self.assertEqual(ns["X"].__annotations__, {})
 
-    # __annotate__ functions now take a second parameter, ".annos", defaulted
-    # by the enclosing scope to the annotation strings, so the signature is no
-    # longer just (format, /).
-    @unittest.expectedFailure
     def test_generated_annotate(self):
         def func(x: int):
             pass

@@ -1478,16 +1478,6 @@ symtable_enter_block(struct symtable *st, identifier name, _Py_block_ty block,
         if (!symtable_add_def(st, &_Py_STR(format), USE, loc)) {
             return 0;
         }
-        // A second parameter, which the enclosing scope defaults to the
-        // annotation source. Like ".format", the leading dot keeps it from
-        // colliding with anything the annotation can name.
-        _Py_DECLARE_STR(annos, ".annos");
-        if (!symtable_add_def(st, &_Py_STR(annos), DEF_PARAM, loc)) {
-            return 0;
-        }
-        if (!symtable_add_def(st, &_Py_STR(annos), USE, loc)) {
-            return 0;
-        }
     }
     return result;
 }

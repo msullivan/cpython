@@ -1178,9 +1178,8 @@ class TestSpecifics(unittest.TestCase):
             self.assertNotIn(5, args)
             self.assertNotIn(45, args)
             # The source is no longer a constant of the evaluate function
-            # itself; the enclosing scope passes it in as the default for the
-            # ".annos" parameter, alongside VALUE for ".format".
-            self.assertIn((1, '40 + 5'), c.co_consts[0].co_consts)
+            # itself; the enclosing scope attaches it as _string_annotations.
+            self.assertIn('40 + 5', c.co_consts[0].co_consts)
             self.assertIn('CALL_INTRINSIC_1', instructions)
 
     def test_lineno_procedure_call(self):

@@ -232,10 +232,9 @@ format_equals(PyObject *format, long expected)
 }
 
 // The entire body of a compiler-generated __annotate__ or evaluate function.
-// Both kinds produce annotation source strings, held in the function's second
-// parameter and defaulted there by the enclosing scope -- a dict of them for
-// __annotate__, a single one for an evaluate function -- so everything the
-// protocol needs is in this frame:
+// Both kinds produce annotation source strings, which the enclosing scope
+// attached to the function as _string_annotations -- a dict of them for
+// __annotate__, a single one for an evaluate function:
 //
 //     if format == VALUE and not PEP 563: return <the strings, evaluated>
 //     if format == VALUE or format == STRING: return the strings
@@ -252,7 +251,7 @@ annotate_impl(PyThreadState *tstate, PyObject *format, bool is_evaluate)
     assert(PyStackRef_FunctionCheck(frame->f_funcobj));
     PyObject *func = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
     PyCodeObject *co = _PyFrame_GetCode(frame);
-    assert(co->co_argcount == 2);
+    assert(co->co_argcount == 1);
 
     int is_value = format_equals(format, _Py_ANNOTATE_FORMAT_VALUE);
     if (is_value < 0) {
@@ -281,9 +280,19 @@ annotate_impl(PyThreadState *tstate, PyObject *format, bool is_evaluate)
             return NULL;
         }
     }
-    // ".annos", the second parameter. Always bound: it has a default.
-    assert(!PyStackRef_IsNull(frame->localsplus[1]));
-    return PyStackRef_AsPyObjectNew(frame->localsplus[1]);
+    PyObject *annos;
+    if (PyObject_GetOptionalAttr(func, &_Py_ID(_string_annotations),
+                                 &annos) < 0) {
+        return NULL;
+    }
+    if (annos == NULL) {
+        // Only reachable by building a function out of a compiler-generated
+        // code object by hand, which skips the intrinsic that attaches them.
+        _PyErr_SetString(tstate, PyExc_SystemError,
+                         "annotation function has no _string_annotations");
+        return NULL;
+    }
+    return annos;
 }
 
 static PyObject *
@@ -331,6 +340,20 @@ no_intrinsic2(PyThreadState* tstate, PyObject *unused1, PyObject *unused2)
     return NULL;
 }
 
+// Attach the annotation source strings to a freshly built __annotate__ or
+// evaluate function. They go in the function's __dict__ rather than its
+// signature so that it keeps the (format, /) signature PEP 649 documents;
+// annotate_impl() reads them back out.
+static PyObject *
+set_string_annotations(PyThreadState *unused, PyObject *func, PyObject *annos)
+{
+    assert(PyFunction_Check(func));
+    if (PyObject_SetAttr(func, &_Py_ID(_string_annotations), annos) < 0) {
+        return NULL;
+    }
+    return Py_NewRef(func);
+}
+
 static PyObject *
 prep_reraise_star(PyThreadState* unused, PyObject *orig, PyObject *excs)
 {
@@ -362,6 +385,7 @@ _PyIntrinsics_BinaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_TYPEVAR_WITH_CONSTRAINTS, make_typevar_with_constraints)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_FUNCTION_TYPE_PARAMS, _Py_set_function_type_params)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_TYPEPARAM_DEFAULT, _Py_set_typeparam_default)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_STRING_ANNOTATIONS, set_string_annotations)
 };
 
 #undef INTRINSIC_FUNC_ENTRY
