@@ -776,40 +776,6 @@ codegen_annotation_metadata(compiler *c, PyObject **metadata)
     return *metadata == NULL ? ERROR : SUCCESS;
 }
 
-// Enter an annotation scope and emit its entire body, which is a single
-// intrinsic call. The caller only has to close the scope afterwards and then
-// attach the annotation source strings with INTRINSIC_SET_STRING_ANNOTATIONS.
-//
-// Both __annotate__ scopes and evaluate function scopes (type alias values,
-// type param bounds and defaults) work this way: the strings live in the
-// function's _string_annotations attribute -- a dict of them for __annotate__,
-// a single one for an evaluate function -- so the signature stays (format, /).
-// The intrinsic implements the whole protocol: both formats, the
-// NotImplementedError, and PEP 563's string-valued VALUE. See annotate_impl()
-// in Python/intrinsics.c.
-static int
-codegen_setup_annotations_scope(compiler *c, location loc,
-                                void *key, PyObject *name,
-                                bool is_evaluate_function)
-{
-    _PyCompile_CodeUnitMetadata umd = {
-        .u_posonlyargcount = 1,
-    };
-    RETURN_IF_ERROR(
-        codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
-                            key, loc.lineno, NULL, &umd));
-
-    assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
-
-    // return <intrinsic>(.format), the only parameter. PEP 563 is
-    // distinguished by the CO_FUTURE_ANNOTATIONS flag on this code object, so
-    // the intrinsic needs no operand for it.
-    ADDOP_I(c, loc, LOAD_FAST, 0);
-    ADDOP_I(c, loc, CALL_INTRINSIC_1,
-            is_evaluate_function ? INTRINSIC_EVALUATE : INTRINSIC_ANNOTATE);
-    return SUCCESS;
-}
-
 static int
 codegen_rename_annotations_format_param(PyCodeObject *co)
 {
@@ -840,10 +806,46 @@ codegen_rename_annotations_format_param(PyCodeObject *co)
     return SUCCESS;
 }
 
+// Emit a complete __annotate__ or evaluate function, given the annotation
+// source strings already on the stack; the function replaces them there.
+//
+// The strings become the function's _string_annotations attribute -- a dict of
+// them for __annotate__, a single one for an evaluate function (a type alias
+// value, or a type param bound or default) -- so its signature stays
+// (format, /). That leaves nothing for the body to do but call one intrinsic,
+// which implements the whole protocol: both formats, the NotImplementedError,
+// and PEP 563's string-valued VALUE. See annotate_impl() in
+// Python/intrinsics.c.
 static int
-codegen_leave_annotations_scope(compiler *c, location loc, Py_ssize_t flags)
+codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
+                      bool is_evaluate_function)
 {
+    Py_ssize_t flags = 0;
+    if (is_evaluate_function) {
+        // (VALUE,), so that an evaluate function can be called with no
+        // arguments at all.
+        PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
+        ADDOP_LOAD_CONST_NEW(c, loc, defaults);
+        flags = MAKE_FUNCTION_DEFAULTS;
+    }
+
+    _PyCompile_CodeUnitMetadata umd = {
+        .u_posonlyargcount = 1,
+    };
+    RETURN_IF_ERROR(
+        codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
+                            key, loc.lineno, NULL, &umd));
+    assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
+
+    // return <intrinsic>(.format), the only parameter. PEP 563 is
+    // distinguished by the CO_FUTURE_ANNOTATIONS flag on this code object, so
+    // the intrinsic needs no operand for it.
+    ADDOP_I_IN_SCOPE(c, loc, LOAD_FAST, 0);
+    ADDOP_I_IN_SCOPE(c, loc, CALL_INTRINSIC_1,
+                     is_evaluate_function ? INTRINSIC_EVALUATE
+                                          : INTRINSIC_ANNOTATE);
     ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
+
     // Collected while the symtable entry and the private name are still this
     // scope's; attached to the function object once it exists, below.
     PyObject *metadata = NULL;
@@ -872,6 +874,7 @@ codegen_leave_annotations_scope(compiler *c, location loc, Py_ssize_t flags)
         ADDOP_LOAD_CONST_NEW(c, loc, metadata);
         ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_ANNOTATE_METADATA);
     }
+    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
     return SUCCESS;
 }
 
@@ -901,17 +904,15 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     assert(ste->ste_has_conditional_annotations);
 
-    void *key = (void *)((uintptr_t)ste->ste_id + 1);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(
-        c, loc, key, ste->ste_annotation_block->ste_name, false));
-    RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc, 0));
     if (scope_type == COMPILE_SCOPE_CLASS) {
         ADDOP_NAME(c, loc, LOAD_DEREF, &_Py_ID(__conditional_annotations__), cellvars);
     }
     else {
         ADDOP_NAME(c, loc, LOAD_NAME, &_Py_ID(__conditional_annotations__), names);
     }
-    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
+    void *key = (void *)((uintptr_t)ste->ste_id + 1);
+    RETURN_IF_ERROR(codegen_annotate_func(
+        c, loc, key, ste->ste_annotation_block->ste_name, false));
     RETURN_IF_ERROR(codegen_nameop(
         c, loc,
         ste->ste_type == ClassBlock ? &_Py_ID(__annotate_func__) : &_Py_ID(__annotate__),
@@ -1231,14 +1232,13 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        int err = codegen_setup_annotations_scope(c, loc, (void *)args,
-                                                 ste->ste_name, false);
+        int err = codegen_push_annotation_strings(c, loc, args, returns);
+        if (err == SUCCESS) {
+            err = codegen_annotate_func(c, loc, (void *)args, ste->ste_name,
+                                        false);
+        }
         Py_DECREF(ste);
         RETURN_IF_ERROR(err);
-        RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc, 0));
-        RETURN_IF_ERROR(
-            codegen_push_annotation_strings(c, loc, args, returns));
-        ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
         return MAKE_FUNCTION_ANNOTATE;
     }
     else {
@@ -1311,16 +1311,8 @@ static int
 codegen_type_param_bound_or_default(compiler *c, expr_ty e,
                                     identifier name, void *key)
 {
-    // (VALUE,): the default for .format, so that the evaluate function can be
-    // called with no arguments at all.
-    PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
-    ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true));
-    RETURN_IF_ERROR(
-        codegen_leave_annotations_scope(c, LOC(e), MAKE_FUNCTION_DEFAULTS));
     ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
-    ADDOP_I(c, LOC(e), CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
-    return SUCCESS;
+    return codegen_annotate_func(c, LOC(e), key, name, true);
 }
 
 static int
@@ -1805,16 +1797,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
 {
     location loc = LOC(s);
     PyObject *name = s->v.TypeAlias.name->v.Name.id;
-    PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
-    ADDOP_LOAD_CONST_NEW(c, loc, defaults);
-    RETURN_IF_ERROR(
-        codegen_setup_annotations_scope(c, LOC(s), s, name, true));
-
-    assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
-    RETURN_IF_ERROR(
-        codegen_leave_annotations_scope(c, loc, MAKE_FUNCTION_DEFAULTS));
     ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
-    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
+    RETURN_IF_ERROR(codegen_annotate_func(c, LOC(s), s, name, true));
 
     ADDOP_I(c, loc, BUILD_TUPLE, 3);
     ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_TYPEALIAS);

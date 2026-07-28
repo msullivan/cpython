@@ -344,8 +344,10 @@ no_intrinsic2(PyThreadState* tstate, PyObject *unused1, PyObject *unused2)
 // evaluate function. They go in the function's __dict__ rather than its
 // signature so that it keeps the (format, /) signature PEP 649 documents;
 // annotate_impl() reads them back out.
+// The strings are pushed before the function is built, so they are the deeper
+// of the intrinsic's two operands.
 static PyObject *
-set_string_annotations(PyThreadState *unused, PyObject *func, PyObject *annos)
+set_string_annotations(PyThreadState *unused, PyObject *annos, PyObject *func)
 {
     assert(PyFunction_Check(func));
     if (PyObject_SetAttr(func, &_Py_ID(_string_annotations), annos) < 0) {

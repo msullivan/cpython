@@ -388,9 +388,9 @@ dis_annot_stmt_str = """\
 
    2           BUILD_MAP                0
                STORE_NAME               0 (__conditional_annotations__)
+               LOAD_NAME                0 (__conditional_annotations__)
                LOAD_CONST               5 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
                MAKE_FUNCTION
-               LOAD_NAME                0 (__conditional_annotations__)
                CALL_INTRINSIC_2         6 (INTRINSIC_SET_STRING_ANNOTATIONS)
                STORE_NAME               4 (__annotate__)
                LOAD_SMALL_INT           1
@@ -424,11 +424,11 @@ def foo(a: int, b: str) -> str:
 dis_fn_with_annotate_str = """\
   0           RESUME                   0
 
-  2           LOAD_CONST               0 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
-              MAKE_FUNCTION
-              BUILD_MAP                0
-              LOAD_CONST               1 (frozendict({'a': 'int', 'b': 'str', 'return': 'str'}))
+  2           BUILD_MAP                0
+              LOAD_CONST               0 (frozendict({'a': 'int', 'b': 'str', 'return': 'str'}))
               DICT_UPDATE              1
+              LOAD_CONST               1 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
+              MAKE_FUNCTION
               CALL_INTRINSIC_2         6 (INTRINSIC_SET_STRING_ANNOTATIONS)
               LOAD_CONST               2 (<code object foo at 0x..., file "<dis>", line 2>)
               MAKE_FUNCTION

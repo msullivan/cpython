@@ -1155,20 +1155,24 @@ class TestSpecifics(unittest.TestCase):
                 self.assertIn('CALL', instructions)
 
     def test_type_param_evaluate_functions_are_string_only(self):
-        get_code_fn_cls = lambda x: x.co_consts[0].co_consts[2]
-        get_code_type_alias = lambda x: x.co_consts[0].co_consts[3]
+        # The evaluate function for the type param's default is the first code
+        # object in the "<generic parameters of foo>" scope.
+        def get_code(x):
+            consts = x.co_consts[0].co_consts
+            return next(k for k in consts if isinstance(k, types.CodeType))
+
         snippets = [
-            ("def foo[T = 40 + 5](): pass", get_code_fn_cls),
-            ("def foo[**P = 40 + 5](): pass", get_code_fn_cls),
-            ("def foo[*Ts = 40 + 5](): pass", get_code_fn_cls),
-            ("class foo[T = 40 + 5]: pass", get_code_fn_cls),
-            ("class foo[**P = 40 + 5]: pass", get_code_fn_cls),
-            ("class foo[*Ts = 40 + 5]: pass", get_code_fn_cls),
-            ("type foo[T = 40 + 5] = 1", get_code_type_alias),
-            ("type foo[**P = 40 + 5] = 1", get_code_type_alias),
-            ("type foo[*Ts = 40 + 5] = 1", get_code_type_alias),
+            "def foo[T = 40 + 5](): pass",
+            "def foo[**P = 40 + 5](): pass",
+            "def foo[*Ts = 40 + 5](): pass",
+            "class foo[T = 40 + 5]: pass",
+            "class foo[**P = 40 + 5]: pass",
+            "class foo[*Ts = 40 + 5]: pass",
+            "type foo[T = 40 + 5] = 1",
+            "type foo[**P = 40 + 5] = 1",
+            "type foo[*Ts = 40 + 5] = 1",
         ]
-        for snippet, get_code in snippets:
+        for snippet in snippets:
             c = compile(snippet, "<dummy>", "exec")
             code = get_code(c)
             opcodes = list(dis.get_instructions(code))
