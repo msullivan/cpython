@@ -354,6 +354,19 @@ set_string_annotations(PyThreadState *unused, PyObject *func, PyObject *annos)
     return Py_NewRef(func);
 }
 
+// Attach the scope metadata annotationlib needs to evaluate this function's
+// annotation strings. Only class-scope annotations need any, so most annotate
+// functions never get this call.
+static PyObject *
+set_annotate_metadata(PyThreadState *unused, PyObject *func, PyObject *metadata)
+{
+    assert(PyFunction_Check(func));
+    if (PyObject_SetAttr(func, &_Py_ID(_annotate_metadata), metadata) < 0) {
+        return NULL;
+    }
+    return Py_NewRef(func);
+}
+
 static PyObject *
 prep_reraise_star(PyThreadState* unused, PyObject *orig, PyObject *excs)
 {
@@ -386,6 +399,7 @@ _PyIntrinsics_BinaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_FUNCTION_TYPE_PARAMS, _Py_set_function_type_params)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_TYPEPARAM_DEFAULT, _Py_set_typeparam_default)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_STRING_ANNOTATIONS, set_string_annotations)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_ANNOTATE_METADATA, set_annotate_metadata)
 };
 
 #undef INTRINSIC_FUNC_ENTRY

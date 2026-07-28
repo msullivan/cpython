@@ -868,17 +868,12 @@ class _ClassScopeTransformer(ast.NodeTransformer):
 
 
 def _get_annotate_metadata(annotate):
-    code = getattr(annotate, "__code__", None)
-    if code is None:
+    metadata = getattr(annotate, "_annotate_metadata", None)
+    if metadata is None:
+        # The compiler only attaches this to annotate functions that need it,
+        # which is those for annotations in a class body.
         return _AnnotateMetadata()
-    for const in code.co_consts:
-        if (
-            isinstance(const, tuple)
-            and len(const) == 4
-            and const[0] == "__annotate_metadata__"
-        ):
-            return _AnnotateMetadata(const[1], const[2], const[3])
-    return _AnnotateMetadata()
+    return _AnnotateMetadata(*metadata)
 
 
 def _eval_in_class_annotation_scope(

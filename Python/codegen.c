@@ -712,9 +712,16 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
 // closure and no format-checking prologue.
 #define EAGER_FUTURE_ANNOTATIONS 0
 
+// Collect what annotationlib needs in order to evaluate this scope's
+// annotation strings the way the original expressions would have been
+// evaluated: the enclosing class's private name for mangling, the names
+// declared global, and the names that were mangled. Sets *metadata to NULL,
+// without failing, when the scope needs none of it -- which is every scope
+// outside a class body, so most of them.
 static int
-codegen_add_annotation_scope_metadata(compiler *c)
+codegen_annotation_metadata(compiler *c, PyObject **metadata)
 {
+    *metadata = NULL;
     PyObject *global_names = PyList_New(0);
     if (global_names == NULL) {
         return ERROR;
@@ -743,10 +750,9 @@ codegen_add_annotation_scope_metadata(compiler *c)
     if (!private) {
         private = Py_None;
     }
-    // Only annotations in a class scope need any of this, so most scopes
-    // record nothing at all. annotationlib assumes exactly these defaults
-    // when the constant is absent, so leave it out rather than pay for it in
-    // every __annotate__ in the module.
+    // annotationlib assumes exactly these defaults when the attribute is
+    // absent, so leave it off rather than pay for it in every __annotate__ in
+    // the module.
     if (private == Py_None
         && SYMTABLE_ENTRY(c)->ste_mangled_names == NULL
         && PyTuple_GET_SIZE(global_names_tuple) == 0) {
@@ -764,23 +770,10 @@ codegen_add_annotation_scope_metadata(compiler *c)
             return ERROR;
         }
     }
-    PyObject *marker = PyUnicode_FromString("__annotate_metadata__");
-    if (marker == NULL) {
-        Py_DECREF(mangled_names);
-        Py_DECREF(global_names_tuple);
-        return ERROR;
-    }
-    PyObject *metadata = PyTuple_Pack(
-        4, marker, private, global_names_tuple, mangled_names);
-    Py_DECREF(marker);
+    *metadata = PyTuple_Pack(3, private, global_names_tuple, mangled_names);
     Py_DECREF(global_names_tuple);
     Py_DECREF(mangled_names);
-    if (metadata == NULL) {
-        return ERROR;
-    }
-    Py_ssize_t index = _PyCompile_AddConst(c, metadata);
-    Py_DECREF(metadata);
-    return index < 0 ? ERROR : SUCCESS;
+    return *metadata == NULL ? ERROR : SUCCESS;
 }
 
 // Enter an annotation scope and emit its entire body, which is a single
@@ -805,7 +798,6 @@ codegen_setup_annotations_scope(compiler *c, location loc,
     RETURN_IF_ERROR(
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
                             key, loc.lineno, NULL, &umd));
-    RETURN_IF_ERROR(codegen_add_annotation_scope_metadata(c));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
@@ -852,20 +844,34 @@ static int
 codegen_leave_annotations_scope(compiler *c, location loc, Py_ssize_t flags)
 {
     ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
-    PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
-    if (co == NULL) {
-        return ERROR;
+    // Collected while the symtable entry and the private name are still this
+    // scope's; attached to the function object once it exists, below.
+    PyObject *metadata = NULL;
+    PyCodeObject *co = NULL;
+    if (codegen_annotation_metadata(c, &metadata) == SUCCESS) {
+        co = _PyCompile_OptimizeAndAssemble(c, 1);
+        if (co != NULL && codegen_rename_annotations_format_param(co) < 0) {
+            Py_CLEAR(co);
+        }
     }
-
-    if (codegen_rename_annotations_format_param(co) < 0) {
-        Py_DECREF(co);
-        return ERROR;
-    }
-
+    // Unconditionally, so that a caller wrapping this in
+    // RETURN_IF_ERROR_IN_SCOPE leaves its own scope rather than this one.
     _PyCompile_ExitScope(c);
+    if (co == NULL) {
+        Py_XDECREF(metadata);
+        return ERROR;
+    }
+
     int ret = codegen_make_closure(c, loc, co, flags);
     Py_DECREF(co);
-    RETURN_IF_ERROR(ret);
+    if (ret < 0) {
+        Py_XDECREF(metadata);
+        return ERROR;
+    }
+    if (metadata != NULL) {
+        ADDOP_LOAD_CONST_NEW(c, loc, metadata);
+        ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_ANNOTATE_METADATA);
+    }
     return SUCCESS;
 }
 
@@ -1310,19 +1316,8 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
     RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true));
-    ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
-    PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
-    _PyCompile_ExitScope(c);
-    if (co == NULL) {
-        return ERROR;
-    }
-    if (codegen_rename_annotations_format_param(co) < 0) {
-        Py_DECREF(co);
-        return ERROR;
-    }
-    int ret = codegen_make_closure(c, LOC(e), co, MAKE_FUNCTION_DEFAULTS);
-    Py_DECREF(co);
-    RETURN_IF_ERROR(ret);
+    RETURN_IF_ERROR(
+        codegen_leave_annotations_scope(c, LOC(e), MAKE_FUNCTION_DEFAULTS));
     ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
     ADDOP_I(c, LOC(e), CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
     return SUCCESS;
@@ -1816,19 +1811,8 @@ codegen_typealias_body(compiler *c, stmt_ty s)
         codegen_setup_annotations_scope(c, LOC(s), s, name, true));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
-    ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
-    PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 0);
-    _PyCompile_ExitScope(c);
-    if (co == NULL) {
-        return ERROR;
-    }
-    if (codegen_rename_annotations_format_param(co) < 0) {
-        Py_DECREF(co);
-        return ERROR;
-    }
-    int ret = codegen_make_closure(c, loc, co, MAKE_FUNCTION_DEFAULTS);
-    Py_DECREF(co);
-    RETURN_IF_ERROR(ret);
+    RETURN_IF_ERROR(
+        codegen_leave_annotations_scope(c, loc, MAKE_FUNCTION_DEFAULTS));
     ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
     ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
 
