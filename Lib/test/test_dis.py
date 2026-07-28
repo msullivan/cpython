@@ -386,22 +386,25 @@ dis_annot_stmt_str = """\
 
    0           RESUME                   0
 
-   2           LOAD_CONST               1 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
-               MAKE_FUNCTION
-               STORE_NAME               4 (__annotate__)
-               BUILD_SET                0
+   2           BUILD_MAP                0
                STORE_NAME               0 (__conditional_annotations__)
+               LOAD_NAME                0 (__conditional_annotations__)
+               BUILD_TUPLE              1
+               LOAD_CONST               5 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
+               MAKE_FUNCTION
+               SET_FUNCTION_ATTRIBUTE   1 (defaults)
+               STORE_NAME               4 (__annotate__)
                LOAD_SMALL_INT           1
                STORE_NAME               1 (x)
+               LOAD_CONST               1 ('int')
                LOAD_NAME                0 (__conditional_annotations__)
-               LOAD_SMALL_INT           0
-               SET_ADD                  1
-               POP_TOP
+               LOAD_CONST               2 ('x')
+               STORE_SUBSCR
 
-   3           LOAD_NAME                0 (__conditional_annotations__)
-               LOAD_SMALL_INT           1
-               SET_ADD                  1
-               POP_TOP
+   3           LOAD_CONST               3 ('fun(1)')
+               LOAD_NAME                0 (__conditional_annotations__)
+               LOAD_CONST               4 ('y')
+               STORE_SUBSCR
 
    4           LOAD_SMALL_INT           1
                LOAD_NAME                2 (lst)

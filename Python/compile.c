@@ -60,16 +60,13 @@ struct compiler_unit {
 
     PyObject *u_private;            /* for private name mangling */
     PyObject *u_static_attributes;  /* for class: attributes accessed via self.X */
-    PyObject *u_deferred_annotations; /* AnnAssign nodes deferred to the end of compilation */
-    PyObject *u_conditional_annotation_indices;  /* indices of annotations that are conditionally executed (or -1 for unconditional annotations) */
-    long u_next_conditional_annotation_index;  /* index of the next conditional annotation */
+    int u_has_deferred_annotations; /* scope needs an __annotate__ function */
 
     instr_sequence *u_instr_sequence; /* codegen output */
     instr_sequence *u_stashed_instr_sequence; /* temporarily stashed parent instruction sequence */
 
     int u_nfblocks;
     int u_in_inlined_comp;
-    int u_in_conditional_block;
 
     _PyCompile_FBlockInfo u_fblock[CO_MAXBLOCKS];
 
@@ -200,8 +197,6 @@ compiler_unit_free(struct compiler_unit *u)
     Py_CLEAR(u->u_metadata.u_fasthidden);
     Py_CLEAR(u->u_private);
     Py_CLEAR(u->u_static_attributes);
-    Py_CLEAR(u->u_deferred_annotations);
-    Py_CLEAR(u->u_conditional_annotation_indices);
     PyMem_Free(u);
 }
 
@@ -686,9 +681,7 @@ _PyCompile_EnterScope(compiler *c, identifier name, int scope_type,
         return ERROR;
     }
 
-    u->u_deferred_annotations = NULL;
-    u->u_conditional_annotation_indices = NULL;
-    u->u_next_conditional_annotation_index = 0;
+    u->u_has_deferred_annotations = 0;
     if (scope_type == COMPILE_SCOPE_CLASS) {
         u->u_static_attributes = PySet_New(0);
         if (!u->u_static_attributes) {
@@ -835,13 +828,10 @@ _PyCompile_InExceptionHandler(compiler *c)
     return false;
 }
 
-void
-_PyCompile_DeferredAnnotations(compiler *c,
-                               PyObject **deferred_annotations,
-                               PyObject **conditional_annotation_indices)
+bool
+_PyCompile_HasDeferredAnnotations(compiler *c)
 {
-    *deferred_annotations = Py_XNewRef(c->u->u_deferred_annotations);
-    *conditional_annotation_indices = Py_XNewRef(c->u->u_conditional_annotation_indices);
+    return c->u->u_has_deferred_annotations;
 }
 
 static location
@@ -1174,62 +1164,11 @@ _PyCompile_RevertInlinedComprehensionScopes(compiler *c, location loc,
 }
 
 void
-_PyCompile_EnterConditionalBlock(struct _PyCompiler *c)
+_PyCompile_AddDeferredAnnotation(compiler *c)
 {
-    c->u->u_in_conditional_block++;
-}
-
-void
-_PyCompile_LeaveConditionalBlock(struct _PyCompiler *c)
-{
-    assert(c->u->u_in_conditional_block > 0);
-    c->u->u_in_conditional_block--;
-}
-
-int
-_PyCompile_AddDeferredAnnotation(compiler *c, stmt_ty s,
-                                 PyObject **conditional_annotation_index)
-{
-    if (c->u->u_deferred_annotations == NULL) {
-        c->u->u_deferred_annotations = PyList_New(0);
-        if (c->u->u_deferred_annotations == NULL) {
-            return ERROR;
-        }
-    }
-    if (c->u->u_conditional_annotation_indices == NULL) {
-        c->u->u_conditional_annotation_indices = PyList_New(0);
-        if (c->u->u_conditional_annotation_indices == NULL) {
-            return ERROR;
-        }
-    }
-    PyObject *ptr = PyLong_FromVoidPtr((void *)s);
-    if (ptr == NULL) {
-        return ERROR;
-    }
-    if (PyList_Append(c->u->u_deferred_annotations, ptr) < 0) {
-        Py_DECREF(ptr);
-        return ERROR;
-    }
-    Py_DECREF(ptr);
-    PyObject *index;
-    if (c->u->u_scope_type == COMPILE_SCOPE_MODULE || c->u->u_in_conditional_block) {
-        index = PyLong_FromLong(c->u->u_next_conditional_annotation_index);
-        if (index == NULL) {
-            return ERROR;
-        }
-        *conditional_annotation_index = Py_NewRef(index);
-        c->u->u_next_conditional_annotation_index++;
-    }
-    else {
-        index = PyLong_FromLong(-1);
-        if (index == NULL) {
-            return ERROR;
-        }
-    }
-    int rc = PyList_Append(c->u->u_conditional_annotation_indices, index);
-    Py_DECREF(index);
-    RETURN_IF_ERROR(rc);
-    return SUCCESS;
+    assert(c->u->u_scope_type == COMPILE_SCOPE_MODULE
+           || c->u->u_scope_type == COMPILE_SCOPE_CLASS);
+    c->u->u_has_deferred_annotations = 1;
 }
 
 /* Raises a SyntaxError and returns ERROR.
