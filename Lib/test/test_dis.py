@@ -422,9 +422,14 @@ def foo(a: int, b: str) -> str:
 dis_fn_with_annotate_str = """\
   0           RESUME                   0
 
-  2           LOAD_CONST               0 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
+  2           BUILD_MAP                0
+              LOAD_CONST               0 (frozendict({'a': 'int', 'b': 'str', 'return': 'str'}))
+              DICT_UPDATE              1
+              BUILD_TUPLE              1
+              LOAD_CONST               1 (<code object __annotate__ at 0x..., file "<dis>", line 2>)
               MAKE_FUNCTION
-              LOAD_CONST               1 (<code object foo at 0x..., file "<dis>", line 2>)
+              SET_FUNCTION_ATTRIBUTE   1 (defaults)
+              LOAD_CONST               2 (<code object foo at 0x..., file "<dis>", line 2>)
               MAKE_FUNCTION
               SET_FUNCTION_ATTRIBUTE  16 (annotate)
               STORE_NAME               0 (foo)

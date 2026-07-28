@@ -2930,6 +2930,19 @@ symtable_visit_annotations(struct symtable *st, stmt_ty o, arguments_ty a, expr_
         return 0;
     }
     Py_XSETREF(st->st_cur->ste_function_name, Py_NewRef(function_ste->ste_name));
+    // A second parameter, which the enclosing scope defaults to a frozendict
+    // of the annotation strings. Like ".format", the leading dot keeps it from
+    // colliding with anything the annotations can name.
+    PyObject *annos = PyUnicode_InternFromString(".annos");
+    if (annos == NULL) {
+        return 0;
+    }
+    int added = (symtable_add_def(st, annos, DEF_PARAM, LOCATION(o))
+                 && symtable_add_def(st, annos, USE, LOCATION(o)));
+    Py_DECREF(annos);
+    if (!added) {
+        return 0;
+    }
     if (is_in_class || current_type == ClassBlock) {
         st->st_cur->ste_can_see_class_scope = 1;
         if (!symtable_add_def(st, &_Py_ID(__classdict__), USE, LOCATION(o))) {

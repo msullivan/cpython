@@ -816,10 +816,13 @@ codegen_add_annotation_scope_metadata(compiler *c)
 //     if .format != VALUE and .format != STRING: raise NotImplementedError
 static int
 codegen_setup_annotations_scope(compiler *c, location loc,
-                                void *key, PyObject *name, bool is_evaluate_function)
+                                void *key, PyObject *name,
+                                bool is_evaluate_function, bool takes_annos)
 {
+    // Function __annotate__ scopes take a second parameter, ".annos", which
+    // the enclosing scope defaults to the frozendict of annotation strings.
     _PyCompile_CodeUnitMetadata umd = {
-        .u_posonlyargcount = 1,
+        .u_posonlyargcount = takes_annos ? 2 : 1,
     };
     RETURN_IF_ERROR(
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
@@ -890,7 +893,18 @@ codegen_rename_annotations_format_param(PyCodeObject *co)
             Py_DECREF(new_names);
             return ERROR;
         }
-        Py_INCREF(item);
+        // Same for the ".annos" parameter: inspect.signature() rejects a
+        // parameter whose name is not an identifier.
+        if (_PyUnicode_EqualToASCIIString(item, ".annos")) {
+            item = PyUnicode_FromString("annos");
+            if (item == NULL) {
+                Py_DECREF(new_names);
+                return ERROR;
+            }
+        }
+        else {
+            Py_INCREF(item);
+        }
         PyTuple_SET_ITEM(new_names, i, item);
     }
     Py_SETREF(co->co_localsplusnames, new_names);
@@ -898,7 +912,7 @@ codegen_rename_annotations_format_param(PyCodeObject *co)
 }
 
 static int
-codegen_leave_annotations_scope(compiler *c, location loc)
+codegen_leave_annotations_scope(compiler *c, location loc, Py_ssize_t flags)
 {
     ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
@@ -912,7 +926,7 @@ codegen_leave_annotations_scope(compiler *c, location loc)
     }
 
     _PyCompile_ExitScope(c);
-    int ret = codegen_make_closure(c, loc, co, 0);
+    int ret = codegen_make_closure(c, loc, co, flags);
     Py_DECREF(co);
     RETURN_IF_ERROR(ret);
     return SUCCESS;
@@ -1003,7 +1017,8 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     assert(ste->ste_annotation_block != NULL);
     void *key = (void *)((uintptr_t)ste->ste_id + 1);
     if (codegen_setup_annotations_scope(c, loc, key,
-                                        ste->ste_annotation_block->ste_name, false) < 0) {
+                                        ste->ste_annotation_block->ste_name,
+                                        false, false) < 0) {
         goto error;
     }
     if (codegen_deferred_annotations_body(c, loc, deferred_anno,
@@ -1015,7 +1030,7 @@ codegen_process_deferred_annotations(compiler *c, location loc)
     Py_DECREF(deferred_anno);
     Py_DECREF(conditional_annotation_indices);
 
-    RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc));
+    RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc, 0));
     RETURN_IF_ERROR(codegen_nameop(
         c, loc,
         ste->ste_type == ClassBlock ? &_Py_ID(__annotate_func__) : &_Py_ID(__annotate__),
@@ -1257,7 +1272,7 @@ codegen_argannotations(compiler *c, asdl_arg_seq* args,
 }
 
 static int
-codegen_annotations_in_scope(compiler *c, location loc,
+codegen_collect_annotations(compiler *c, location loc,
                              arguments_ty args, expr_ty returns,
                              PyObject *annotations)
 {
@@ -1288,6 +1303,37 @@ codegen_annotations_in_scope(compiler *c, location loc,
     return 0;
 }
 
+/* Collect the annotations into one frozendict constant and push it, wrapped in
+   a defaults tuple, in the enclosing scope. __annotate__ picks it up as the
+   default of its ".annos" parameter. */
+static int
+codegen_push_annotation_defaults(compiler *c, location loc,
+                                 arguments_ty args, expr_ty returns)
+{
+    // Emitted before anything is allocated, so that no failure below can leak
+    // the frozendict.
+    ADDOP_I(c, loc, BUILD_MAP, 0);
+    PyObject *annotations = PyDict_New();
+    if (annotations == NULL) {
+        return ERROR;
+    }
+    if (codegen_collect_annotations(c, loc, args, returns, annotations) < 0) {
+        Py_DECREF(annotations);
+        return ERROR;
+    }
+    PyObject *frozen = PyFrozenDict_New(annotations);
+    Py_DECREF(annotations);
+    if (frozen == NULL) {
+        return ERROR;
+    }
+    // Copy the constant into a real dict here, at definition time, so that
+    // __annotate__ only has to hand out its parameter.
+    ADDOP_LOAD_CONST_NEW(c, loc, frozen);
+    ADDOP_I(c, loc, DICT_UPDATE, 1);
+    ADDOP_I(c, loc, BUILD_TUPLE, 1);
+    return SUCCESS;
+}
+
 static int
 codegen_function_annotations(compiler *c, location loc,
                              arguments_ty args, expr_ty returns)
@@ -1304,38 +1350,21 @@ codegen_function_annotations(compiler *c, location loc,
     assert(ste != NULL);
 
     if (ste->ste_annotations_used) {
-        PyObject *annotations = PyDict_New();
-        if (annotations == NULL) {
+        int err = codegen_push_annotation_defaults(c, loc, args, returns);
+        if (err < 0) {
             Py_DECREF(ste);
             return ERROR;
         }
-        int err = codegen_setup_annotations_scope(c, loc, (void *)args, ste->ste_name, false);
+        err = codegen_setup_annotations_scope(c, loc, (void *)args,
+                                             ste->ste_name, false, true);
         Py_DECREF(ste);
-        if (err < 0) {
-            Py_DECREF(annotations);
-            return ERROR;
-        }
-        // In the annotation scope from here on: every failure has to leave it.
-        if (codegen_annotations_in_scope(c, loc, args, returns, annotations) < 0) {
-            Py_DECREF(annotations);
-            _PyCompile_ExitScope(c);
-            return ERROR;
-        }
-        // The annotations are all constant strings, so the whole mapping can
-        // be one constant. __annotate__ must hand out a real dict that the
-        // caller may mutate, so copy it: three instructions no matter how
-        // many annotations there are. BUILD_MAP goes first so that a failure
-        // there cannot leak the frozendict.
-        ADDOP_I_IN_SCOPE(c, loc, BUILD_MAP, 0);
-        PyObject *frozen = PyFrozenDict_New(annotations);
-        Py_DECREF(annotations);
-        if (frozen == NULL) {
-            _PyCompile_ExitScope(c);
-            return ERROR;
-        }
-        ADDOP_LOAD_CONST_NEW(c, loc, frozen);
-        ADDOP_I_IN_SCOPE(c, loc, DICT_UPDATE, 1);
-        RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc));
+        RETURN_IF_ERROR(err);
+        // Hand out the frozendict as it is. Callers that need a real dict the
+        // user may mutate (the __annotations__ getters, annotationlib) copy it
+        // themselves; callers that only read it do not have to.
+        ADDOP_I_IN_SCOPE(c, loc, LOAD_FAST, 1);
+        RETURN_IF_ERROR(codegen_leave_annotations_scope(c, loc,
+                                                       MAKE_FUNCTION_DEFAULTS));
         return MAKE_FUNCTION_ANNOTATE;
     }
     else {
@@ -1410,7 +1439,7 @@ codegen_type_param_bound_or_default(compiler *c, expr_ty e,
 {
     PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
     ADDOP_LOAD_CONST_NEW(c, LOC(e), defaults);
-    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true));
+    RETURN_IF_ERROR(codegen_setup_annotations_scope(c, LOC(e), key, name, true, false));
     ADDOP_LOAD_CONST_NEW(c, LOC(e), _PyAST_ExprAsUnicode(e));
     ADDOP_IN_SCOPE(c, LOC(e), RETURN_VALUE);
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
@@ -1914,7 +1943,7 @@ codegen_typealias_body(compiler *c, stmt_ty s)
     ADDOP_LOAD_CONST_NEW(c, loc, defaults);
     RETURN_IF_ERROR(
         codegen_setup_annotations_scope(c, LOC(s), s, name,
-                                        true));
+                                        true, false));
 
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
     ADDOP_LOAD_CONST_NEW(c, loc, _PyAST_ExprAsUnicode(s->v.TypeAlias.value));
