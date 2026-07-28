@@ -19,9 +19,10 @@
 #define INTRINSIC_SUBSCRIPT_GENERIC             10
 #define INTRINSIC_TYPEALIAS                     11
 #define INTRINSIC_BUILD_FROZENSET               12
-#define INTRINSIC_ANNOTATE_VALUE                13
+#define INTRINSIC_EVALUATE                      13
+#define INTRINSIC_ANNOTATE                      14
 
-#define MAX_INTRINSIC_1                         13
+#define MAX_INTRINSIC_1                         14
 
 
 /* Binary Functions: */

@@ -1065,10 +1065,10 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
 def _annotate_value(annotate, is_evaluate):
     """Implement VALUE for compiler-generated annotation functions.
 
-    ``__annotate__`` and evaluate function bodies produce only annotation
-    strings. The compiler calls this helper through the
-    ``INTRINSIC_ANNOTATE_VALUE`` intrinsic, which obtains the currently
-    executing function from its frame.
+    ``__annotate__`` and evaluate functions are handed their annotation
+    strings by the enclosing scope. The compiler calls this helper through the
+    ``INTRINSIC_ANNOTATE`` and ``INTRINSIC_EVALUATE`` intrinsics, which obtain
+    the currently executing function from its frame.
     """
     return _eval_string_annotate(
         annotate, Format.VALUE, None, _is_evaluate=is_evaluate

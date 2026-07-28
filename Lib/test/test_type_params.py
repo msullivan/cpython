@@ -1530,10 +1530,18 @@ class TestEvaluateFunctions(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case):
                 sig = inspect.signature(case)
-                self.assertEqual(str(sig), '(format=1, /)')
-                param, = sig.parameters.values()
-                self.assertEqual(param.name, 'format')
-                self.assertIs(param.kind, inspect.Parameter.POSITIONAL_ONLY)
+                # ".annos", holding the annotation source, is a second
+                # parameter defaulted by the enclosing scope; it has to be
+                # renamed for the same reason ".format" does.
+                fmt, annos = sig.parameters.values()
+                self.assertEqual(fmt.name, 'format')
+                self.assertIs(fmt.kind, inspect.Parameter.POSITIONAL_ONLY)
+                self.assertEqual(fmt.default, 1)
+                self.assertEqual(annos.name, 'annos')
+                self.assertIs(annos.kind, inspect.Parameter.POSITIONAL_ONLY)
+                self.assertIsInstance(annos.default, str)
+                self.assertEqual(str(sig),
+                                 f"(format=1, annos={annos.default!r}, /)")
 
     def test_constraints(self):
         def f[T: (int, str)](): pass

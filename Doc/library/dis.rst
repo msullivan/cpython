@@ -1884,9 +1884,18 @@ iterations of the loop.
    |                                   | of the type alias's name,         |
    |                                   | type parameters, and value.       |
    +-----------------------------------+-----------------------------------+
-   | ``INTRINSIC_ANNOTATE_VALUE``      | Evaluates a compiler-generated    |
-   |                                   | annotation or evaluate function   |
-   |                                   | in the value format.              |
+   | ``INTRINSIC_EVALUATE``            | Implements the whole body of a    |
+   |                                   | compiler-generated evaluate       |
+   |                                   | function, as used for a type      |
+   |                                   | alias value or a type parameter's |
+   |                                   | bound or default. The argument is |
+   |                                   | the requested format.             |
+   +-----------------------------------+-----------------------------------+
+   | ``INTRINSIC_ANNOTATE``            | Implements the whole body of a    |
+   |                                   | compiler-generated                |
+   |                                   | :attr:`~object.__annotate__`      |
+   |                                   | function. The argument is the     |
+   |                                   | requested format.                 |
    +-----------------------------------+-----------------------------------+
 
    .. versionadded:: 3.12

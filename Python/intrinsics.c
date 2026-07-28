@@ -216,27 +216,86 @@ make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
     return _PySet_Freeze(set);
 }
 
-static PyObject *
-annotate_value(PyThreadState *tstate, PyObject *is_evaluate)
+static int
+format_equals(PyObject *format, long expected)
 {
-    // Implementation of the VALUE format for compiler-generated
-    // __annotate__ and evaluate functions, whose bodies produce only STRING.
-    // The executing frame retains the exact function, including the globals
-    // and closure annotationlib needs to evaluate the annotation strings.
+    // Rich comparison rather than reading the int directly, so that a Format
+    // enum member, a plain int and anything else that compares equal all
+    // behave the way the COMPARE_OP this replaced did.
+    PyObject *o = PyLong_FromLong(expected);
+    if (o == NULL) {
+        return -1;
+    }
+    int res = PyObject_RichCompareBool(format, o, Py_EQ);
+    Py_DECREF(o);
+    return res;
+}
+
+// The entire body of a compiler-generated __annotate__ or evaluate function.
+// Both kinds produce annotation source strings, held in the function's second
+// parameter and defaulted there by the enclosing scope -- a dict of them for
+// __annotate__, a single one for an evaluate function -- so everything the
+// protocol needs is in this frame:
+//
+//     if format == VALUE and not PEP 563: return <the strings, evaluated>
+//     if format == VALUE or format == STRING: return the strings
+//     raise NotImplementedError
+//
+// Evaluating means handing the executing function to annotationlib, which uses
+// its globals and closure as the environment. PEP 563 only concerns
+// __annotate__; a type alias value or type param bound is evaluated either way.
+static PyObject *
+annotate_impl(PyThreadState *tstate, PyObject *format, bool is_evaluate)
+{
     _PyInterpreterFrame *frame = tstate->current_frame;
     assert(frame != NULL);
     assert(PyStackRef_FunctionCheck(frame->f_funcobj));
-    PyObject *annotate = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
+    PyObject *func = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
+    PyCodeObject *co = _PyFrame_GetCode(frame);
+    assert(co->co_argcount == 2);
 
-    PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
-                                                     "_annotate_value");
-    if (impl == NULL) {
+    int is_value = format_equals(format, _Py_ANNOTATE_FORMAT_VALUE);
+    if (is_value < 0) {
         return NULL;
     }
-    PyObject *res = PyObject_CallFunctionObjArgs(impl, annotate, is_evaluate,
-                                                 NULL);
-    Py_DECREF(impl);
-    return res;
+    if (is_value
+        && (is_evaluate || !(co->co_flags & CO_FUTURE_ANNOTATIONS)))
+    {
+        PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
+                                                         "_annotate_value");
+        if (impl == NULL) {
+            return NULL;
+        }
+        PyObject *res = PyObject_CallFunctionObjArgs(
+            impl, func, is_evaluate ? Py_True : Py_False, NULL);
+        Py_DECREF(impl);
+        return res;
+    }
+    if (!is_value) {
+        int is_string = format_equals(format, _Py_ANNOTATE_FORMAT_STRING);
+        if (is_string < 0) {
+            return NULL;
+        }
+        if (!is_string) {
+            _PyErr_SetString(tstate, PyExc_NotImplementedError, "");
+            return NULL;
+        }
+    }
+    // ".annos", the second parameter. Always bound: it has a default.
+    assert(!PyStackRef_IsNull(frame->localsplus[1]));
+    return PyStackRef_AsPyObjectNew(frame->localsplus[1]);
+}
+
+static PyObject *
+annotate(PyThreadState *tstate, PyObject *format)
+{
+    return annotate_impl(tstate, format, false);
+}
+
+static PyObject *
+evaluate(PyThreadState *tstate, PyObject *format)
+{
+    return annotate_impl(tstate, format, true);
 }
 
 
@@ -258,7 +317,8 @@ _PyIntrinsics_UnaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SUBSCRIPT_GENERIC, _Py_subscript_generic)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_TYPEALIAS, _Py_make_typealias)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_BUILD_FROZENSET, make_frozenset)
-    INTRINSIC_FUNC_ENTRY(INTRINSIC_ANNOTATE_VALUE, annotate_value)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_EVALUATE, evaluate)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_ANNOTATE, annotate)
 };
 
 
