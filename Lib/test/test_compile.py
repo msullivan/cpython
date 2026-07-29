@@ -1154,38 +1154,6 @@ class TestSpecifics(unittest.TestCase):
                 self.assertIn('LOAD_ATTR', instructions)
                 self.assertIn('CALL', instructions)
 
-    def test_type_param_evaluate_functions_are_string_only(self):
-        # The evaluate function for the type param's default is the first code
-        # object in the "<generic parameters of foo>" scope.
-        def get_code(x):
-            consts = x.co_consts[0].co_consts
-            return next(k for k in consts if isinstance(k, types.CodeType))
-
-        snippets = [
-            "def foo[T = 40 + 5](): pass",
-            "def foo[**P = 40 + 5](): pass",
-            "def foo[*Ts = 40 + 5](): pass",
-            "class foo[T = 40 + 5]: pass",
-            "class foo[**P = 40 + 5]: pass",
-            "class foo[*Ts = 40 + 5]: pass",
-            "type foo[T = 40 + 5] = 1",
-            "type foo[**P = 40 + 5] = 1",
-            "type foo[*Ts = 40 + 5] = 1",
-        ]
-        for snippet in snippets:
-            c = compile(snippet, "<dummy>", "exec")
-            code = get_code(c)
-            opcodes = list(dis.get_instructions(code))
-            instructions = [opcode.opname for opcode in opcodes]
-            args = [opcode.oparg for opcode in opcodes]
-            self.assertNotIn(40, args)
-            self.assertNotIn(5, args)
-            self.assertNotIn(45, args)
-            # The source is no longer a constant of the evaluate function
-            # itself; the enclosing scope attaches it as _string_annotations.
-            self.assertIn('40 + 5', c.co_consts[0].co_consts)
-            self.assertIn('CALL_INTRINSIC_1', instructions)
-
     def test_lineno_procedure_call(self):
         def call():
             (

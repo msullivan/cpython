@@ -19,10 +19,9 @@
 #define INTRINSIC_SUBSCRIPT_GENERIC             10
 #define INTRINSIC_TYPEALIAS                     11
 #define INTRINSIC_BUILD_FROZENSET               12
-#define INTRINSIC_EVALUATE                      13
-#define INTRINSIC_ANNOTATE                      14
+#define INTRINSIC_MAKE_ANNOTATE                 13
 
-#define MAX_INTRINSIC_1                         14
+#define MAX_INTRINSIC_1                         13
 
 
 /* Binary Functions: */
@@ -33,7 +32,7 @@
 #define INTRINSIC_SET_FUNCTION_TYPE_PARAMS       4
 #define INTRINSIC_SET_TYPEPARAM_DEFAULT          5
 #define INTRINSIC_SET_STRING_ANNOTATIONS         6
-#define INTRINSIC_SET_ANNOTATE_METADATA          7
+#define INTRINSIC_MAKE_ANNOTATE_CLOSURE          7
 
 #define MAX_INTRINSIC_2                          7
 

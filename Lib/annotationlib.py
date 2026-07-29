@@ -921,9 +921,12 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     globals = getattr(annotate, "__globals__", None)
     closure = getattr(annotate, "__closure__", None)
     if closure:
-        cells = dict(
-            zip(annotate.__code__.co_freevars, closure, strict=True)
-        )
+        # Compiler-generated annotation functions carry their free variable
+        # names directly; hand-written ones are real functions.
+        freevars = getattr(annotate, "__freevars__", None)
+        if freevars is None:
+            freevars = annotate.__code__.co_freevars
+        cells = dict(zip(freevars, closure, strict=True))
     else:
         cells = None
     metadata = _get_annotate_metadata(annotate)
@@ -1061,13 +1064,40 @@ def _annotate_value(annotate, is_evaluate):
     """Implement VALUE for compiler-generated annotation functions.
 
     ``__annotate__`` and evaluate functions are handed their annotation
-    strings by the enclosing scope. The compiler calls this helper through the
-    ``INTRINSIC_ANNOTATE`` and ``INTRINSIC_EVALUATE`` intrinsics, which obtain
-    the currently executing function from its frame.
+    strings by the enclosing scope, and call this helper when asked for
+    anything else.
     """
     return _eval_string_annotate(
         annotate, Format.VALUE, None, _is_evaluate=is_evaluate
     )
+
+
+_annotate_signatures = {}
+
+
+def _annotate_signature(is_evaluate):
+    """The __signature__ of a compiler-generated annotation function.
+
+    inspect.signature() cannot work this out for itself: these are instances
+    of a C type, not functions. An evaluate function can be called with no
+    arguments at all, an __annotate__ cannot.
+    """
+    try:
+        return _annotate_signatures[is_evaluate]
+    except KeyError:
+        pass
+    # Only ever reached from inspect.signature(), so inspect is already
+    # imported and this cannot deepen the import cycle.
+    import inspect
+
+    param = inspect.Parameter(
+        "format",
+        inspect.Parameter.POSITIONAL_ONLY,
+        default=Format.VALUE.value if is_evaluate else inspect.Parameter.empty,
+    )
+    sig = inspect.Signature([param])
+    _annotate_signatures[is_evaluate] = sig
+    return sig
 
 
 def _mangle_private_name(class_name, name):

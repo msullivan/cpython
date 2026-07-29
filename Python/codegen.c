@@ -18,6 +18,7 @@
 #define NEED_OPCODE_TABLES
 #include "pycore_opcode_utils.h"
 #undef NEED_OPCODE_TABLES
+#include "pycore_annotateobject.h" // ANNOTATE_EVALUATE
 #include "pycore_c_array.h"       // _Py_c_array_t
 #include "pycore_code.h"          // COMPARISON_LESS_THAN
 #include "pycore_compile.h"
@@ -776,106 +777,143 @@ codegen_annotation_metadata(compiler *c, PyObject **metadata)
     return *metadata == NULL ? ERROR : SUCCESS;
 }
 
-static int
-codegen_rename_annotations_format_param(PyCodeObject *co)
+// The free variables of the annotation scope we are currently in, in the order
+// a code object would have laid them out in co_localsplusnames. The annotate
+// object zips them against its closure to rebuild the environment the
+// annotation strings were written in.
+static PyObject *
+codegen_annotation_freevars(compiler *c)
 {
-    // We want the parameter to __annotate__ to be named "format" in the
-    // signature  shown by inspect.signature(), but we need to use a
-    // different name (.format) in the symtable; if the name
-    // "format" appears in the annotations, it doesn't get clobbered
-    // by this name.  This code is essentially:
-    // co->co_localsplusnames = ("format", *co->co_localsplusnames[1:])
-    const Py_ssize_t size = PyObject_Size(co->co_localsplusnames);
-    if (size == -1) {
-        return ERROR;
+    _PyCompile_CodeUnitMetadata *umd = METADATA(c);
+    Py_ssize_t base = PyDict_GET_SIZE(umd->u_cellvars);
+    Py_ssize_t n = PyDict_GET_SIZE(umd->u_freevars);
+    PyObject *freevars = PyTuple_New(n);
+    if (freevars == NULL) {
+        return NULL;
     }
-    PyObject *new_names = PyTuple_New(size);
-    if (new_names == NULL) {
-        return ERROR;
-    }
-    PyTuple_SET_ITEM(new_names, 0, Py_NewRef(&_Py_ID(format)));
-    for (int i = 1; i < size; i++) {
-        PyObject *item = PyTuple_GetItem(co->co_localsplusnames, i);
-        if (item == NULL) {
-            Py_DECREF(new_names);
-            return ERROR;
+    PyObject *name, *index;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(umd->u_freevars, &pos, &name, &index)) {
+        Py_ssize_t i = PyLong_AsSsize_t(index);
+        if (i == -1 && PyErr_Occurred()) {
+            Py_DECREF(freevars);
+            return NULL;
         }
-        PyTuple_SET_ITEM(new_names, i, Py_NewRef(item));
+        i -= base;
+        assert(0 <= i && i < n);
+        PyTuple_SET_ITEM(freevars, i, Py_NewRef(name));
     }
-    Py_SETREF(co->co_localsplusnames, new_names);
+    return freevars;
+}
+
+// Everything about an annotation function that is known at compile time, as
+// one constant: the bare qualname when there is nothing else to say, which is
+// the majority of them, and otherwise a tuple. Unpacked by unpack_payload() in
+// Objects/annotateobject.c.
+static PyObject *
+codegen_annotate_payload(PyObject *qualname, PyObject *freevars,
+                         PyObject *metadata, int flags)
+{
+    if (PyTuple_GET_SIZE(freevars) == 0 && metadata == NULL && flags == 0) {
+        return Py_NewRef(qualname);
+    }
+    PyObject *flags_obj = PyLong_FromLong(flags);
+    if (flags_obj == NULL) {
+        return NULL;
+    }
+    PyObject *payload;
+    if (metadata == NULL) {
+        payload = PyTuple_Pack(3, qualname, freevars, flags_obj);
+    }
+    else {
+        payload = PyTuple_Pack(4, qualname, freevars, flags_obj, metadata);
+    }
+    Py_DECREF(flags_obj);
+    return payload;
+}
+
+static int
+codegen_emit_annotate(compiler *c, location loc, PyObject *freevars,
+                      PyObject *payload)
+{
+    Py_ssize_t nfree = PyTuple_GET_SIZE(freevars);
+    for (Py_ssize_t i = 0; i < nfree; i++) {
+        /* Bypass codegen_nameop because it would generate LOAD_DEREF but
+           LOAD_CLOSURE is needed. */
+        int arg = _PyCompile_LookupArg(c, NULL, PyTuple_GET_ITEM(freevars, i));
+        RETURN_IF_ERROR(arg);
+        ADDOP_I(c, loc, LOAD_CLOSURE, arg);
+    }
+    if (nfree) {
+        ADDOP_I(c, loc, BUILD_TUPLE, nfree);
+    }
+    ADDOP_LOAD_CONST(c, loc, payload);
+    if (nfree) {
+        ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_MAKE_ANNOTATE_CLOSURE);
+    }
+    else {
+        ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_MAKE_ANNOTATE);
+    }
+    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
     return SUCCESS;
 }
 
 // Emit a complete __annotate__ or evaluate function, given the annotation
 // source strings already on the stack; the function replaces them there.
 //
-// The strings become the function's _string_annotations attribute -- a dict of
-// them for __annotate__, a single one for an evaluate function (a type alias
-// value, or a type param bound or default) -- so its signature stays
-// (format, /). That leaves nothing for the body to do but call one intrinsic,
-// which implements the whole protocol: both formats, the NotImplementedError,
-// and PEP 563's string-valued VALUE. See annotate_impl() in
-// Python/intrinsics.c.
+// The strings become the function's _string_annotations -- a dict of them for
+// __annotate__, a single one for an evaluate function (a type alias value, or
+// a type param bound or default) -- leaving nothing to execute. So there is no
+// code object and no Python function: what we build is an annotate object, out
+// of one constant plus, where the annotations reference an enclosing function's
+// locals, the cells. It implements the whole protocol itself -- both formats,
+// the NotImplementedError, and PEP 563's string-valued VALUE. See
+// Objects/annotateobject.c.
 static int
 codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
                       bool is_evaluate_function)
 {
-    Py_ssize_t flags = 0;
-    if (is_evaluate_function) {
-        // (VALUE,), so that an evaluate function can be called with no
-        // arguments at all.
-        PyObject *defaults = PyTuple_Pack(1, _PyLong_GetOne());
-        ADDOP_LOAD_CONST_NEW(c, loc, defaults);
-        flags = MAKE_FUNCTION_DEFAULTS;
-    }
-
-    _PyCompile_CodeUnitMetadata umd = {
-        .u_posonlyargcount = 1,
-    };
     RETURN_IF_ERROR(
         codegen_enter_scope(c, name, COMPILE_SCOPE_ANNOTATIONS,
-                            key, loc.lineno, NULL, &umd));
+                            key, loc.lineno, NULL, NULL));
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
-    // return <intrinsic>(.format), the only parameter. PEP 563 is
-    // distinguished by the CO_FUTURE_ANNOTATIONS flag on this code object, so
-    // the intrinsic needs no operand for it.
-    ADDOP_I_IN_SCOPE(c, loc, LOAD_FAST, 0);
-    ADDOP_I_IN_SCOPE(c, loc, CALL_INTRINSIC_1,
-                     is_evaluate_function ? INTRINSIC_EVALUATE
-                                          : INTRINSIC_ANNOTATE);
-    ADDOP_IN_SCOPE(c, loc, RETURN_VALUE);
+    // PEP 563 only concerns __annotate__; a type alias value or a type param
+    // bound is evaluated either way.
+    int flags = 0;
+    if (is_evaluate_function) {
+        flags |= ANNOTATE_EVALUATE;
+    }
+    else if (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS) {
+        flags |= ANNOTATE_FUTURE;
+    }
 
     // Collected while the symtable entry and the private name are still this
-    // scope's; attached to the function object once it exists, below.
+    // scope's.
+    PyObject *qualname = Py_NewRef(_PyCompile_Qualname(c));
     PyObject *metadata = NULL;
-    PyCodeObject *co = NULL;
-    if (codegen_annotation_metadata(c, &metadata) == SUCCESS) {
-        co = _PyCompile_OptimizeAndAssemble(c, 1);
-        if (co != NULL && codegen_rename_annotations_format_param(co) < 0) {
-            Py_CLEAR(co);
-        }
+    PyObject *payload = NULL;
+    PyObject *freevars = codegen_annotation_freevars(c);
+    if (freevars != NULL
+        && codegen_annotation_metadata(c, &metadata) == SUCCESS)
+    {
+        payload = codegen_annotate_payload(qualname, freevars, metadata, flags);
     }
-    // Unconditionally, so that a caller wrapping this in
-    // RETURN_IF_ERROR_IN_SCOPE leaves its own scope rather than this one.
+    // Unconditionally, and before anything is emitted into the enclosing
+    // scope, so that a caller wrapping this in RETURN_IF_ERROR_IN_SCOPE leaves
+    // its own scope rather than this one.
     _PyCompile_ExitScope(c);
-    if (co == NULL) {
-        Py_XDECREF(metadata);
+    Py_DECREF(qualname);
+    Py_XDECREF(metadata);
+    if (payload == NULL) {
+        Py_XDECREF(freevars);
         return ERROR;
     }
 
-    int ret = codegen_make_closure(c, loc, co, flags);
-    Py_DECREF(co);
-    if (ret < 0) {
-        Py_XDECREF(metadata);
-        return ERROR;
-    }
-    if (metadata != NULL) {
-        ADDOP_LOAD_CONST_NEW(c, loc, metadata);
-        ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_ANNOTATE_METADATA);
-    }
-    ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_SET_STRING_ANNOTATIONS);
-    return SUCCESS;
+    int ret = codegen_emit_annotate(c, loc, freevars, payload);
+    Py_DECREF(freevars);
+    Py_DECREF(payload);
+    return ret;
 }
 
 // Build the __annotate__ function for a class or module body. The annotations

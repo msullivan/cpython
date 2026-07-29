@@ -1884,18 +1884,13 @@ iterations of the loop.
    |                                   | of the type alias's name,         |
    |                                   | type parameters, and value.       |
    +-----------------------------------+-----------------------------------+
-   | ``INTRINSIC_EVALUATE``            | Implements the whole body of a    |
-   |                                   | compiler-generated evaluate       |
-   |                                   | function, as used for a type      |
-   |                                   | alias value or a type parameter's |
-   |                                   | bound or default. The argument is |
-   |                                   | the requested format.             |
-   +-----------------------------------+-----------------------------------+
-   | ``INTRINSIC_ANNOTATE``            | Implements the whole body of a    |
-   |                                   | compiler-generated                |
+   | ``INTRINSIC_MAKE_ANNOTATE``       | Builds a compiler-generated       |
    |                                   | :attr:`~object.__annotate__`      |
-   |                                   | function. The argument is the     |
-   |                                   | requested format.                 |
+   |                                   | function, or an evaluate function |
+   |                                   | for a type alias value or a type  |
+   |                                   | parameter's bound or default. The |
+   |                                   | argument is a constant describing |
+   |                                   | it.                               |
    +-----------------------------------+-----------------------------------+
 
    .. versionadded:: 3.12
@@ -1930,6 +1925,17 @@ iterations of the loop.
    +----------------------------------------+-----------------------------------+
    | ``INTRINSIC_SET_FUNCTION_TYPE_PARAMS`` | Sets the ``__type_params__``      |
    |                                        | attribute of a function.          |
+   +----------------------------------------+-----------------------------------+
+   | ``INTRINSIC_SET_STRING_ANNOTATIONS``   | Hands the annotation source       |
+   |                                        | strings to an                     |
+   |                                        | :attr:`~object.__annotate__` or   |
+   |                                        | evaluate function.                |
+   +----------------------------------------+-----------------------------------+
+   | ``INTRINSIC_MAKE_ANNOTATE_CLOSURE``    | As ``INTRINSIC_MAKE_ANNOTATE``,   |
+   |                                        | for a function whose annotations  |
+   |                                        | reference an enclosing scope's    |
+   |                                        | locals. The arguments are the     |
+   |                                        | cells and the constant.           |
    +----------------------------------------+-----------------------------------+
 
    .. versionadded:: 3.12

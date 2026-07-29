@@ -1469,16 +1469,6 @@ symtable_enter_block(struct symtable *st, identifier name, _Py_block_ty block,
         return 0;
     int result = symtable_enter_existing_block(st, ste, /* add_to_children */true);
     Py_DECREF(ste);
-    if (block == AnnotationBlock || block == TypeVariableBlock || block == TypeAliasBlock) {
-        _Py_DECLARE_STR(format, ".format");
-        // We need to insert code that reads this "parameter" to the function.
-        if (!symtable_add_def(st, &_Py_STR(format), DEF_PARAM, loc)) {
-            return 0;
-        }
-        if (!symtable_add_def(st, &_Py_STR(format), USE, loc)) {
-            return 0;
-        }
-    }
     return result;
 }
 

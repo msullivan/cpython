@@ -960,19 +960,27 @@ _PyCompile_LookupArg(compiler *c, PyCodeObject *co, PyObject *name)
         arg = dict_lookup_arg(c->u->u_metadata.u_freevars, name);
     }
     if (arg == -1 && !PyErr_Occurred()) {
-        PyObject *freevars = _PyCode_GetFreevars(co);
+        // co is NULL when the child scope produced no code object.
+        PyObject *freevars = co == NULL ? NULL : _PyCode_GetFreevars(co);
         if (freevars == NULL) {
             PyErr_Clear();
+            PyErr_Format(PyExc_SystemError,
+                "compiler_lookup_arg(name=%R) with reftype=%d failed in %S",
+                name,
+                reftype,
+                c->u->u_metadata.u_name);
         }
-        PyErr_Format(PyExc_SystemError,
-            "compiler_lookup_arg(name=%R) with reftype=%d failed in %S; "
-            "freevars of code %S: %R",
-            name,
-            reftype,
-            c->u->u_metadata.u_name,
-            co->co_name,
-            freevars);
-        Py_XDECREF(freevars);
+        else {
+            PyErr_Format(PyExc_SystemError,
+                "compiler_lookup_arg(name=%R) with reftype=%d failed in %S; "
+                "freevars of code %S: %R",
+                name,
+                reftype,
+                c->u->u_metadata.u_name,
+                co->co_name,
+                freevars);
+            Py_DECREF(freevars);
+        }
         return ERROR;
     }
     return arg;

@@ -1530,7 +1530,6 @@ _PyStaticObjects_CheckRefcnt(PyInterpreterState *interp) {
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_abc_impl));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_abstract_));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_active));
-    _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_annotate_metadata));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_anonymous_));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_argtypes_));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_as_parameter_));
@@ -1565,7 +1564,6 @@ _PyStaticObjects_CheckRefcnt(PyInterpreterState *interp) {
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_showwarnmsg));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_shutdown));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_slotnames));
-    _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_string_annotations));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_strptime));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_strptime_datetime_date));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(_strptime_datetime_datetime));

@@ -2,6 +2,7 @@
 #define _PY_INTERPRETER
 
 #include "Python.h"
+#include "pycore_annotateobject.h" // _PyAnnotate_New()
 #include "pycore_compile.h"       // _PyCompile_GetUnaryIntrinsicName
 #include "pycore_function.h"      // _Py_set_function_type_params()
 #include "pycore_genobject.h"     // _PyAsyncGenValueWrapperNew
@@ -216,95 +217,16 @@ make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
     return _PySet_Freeze(set);
 }
 
-static int
-format_equals(PyObject *format, long expected)
-{
-    // Rich comparison rather than reading the int directly, so that a Format
-    // enum member, a plain int and anything else that compares equal all
-    // behave the way the COMPARE_OP this replaced did.
-    PyObject *o = PyLong_FromLong(expected);
-    if (o == NULL) {
-        return -1;
-    }
-    int res = PyObject_RichCompareBool(format, o, Py_EQ);
-    Py_DECREF(o);
-    return res;
-}
-
-// The entire body of a compiler-generated __annotate__ or evaluate function.
-// Both kinds produce annotation source strings, which the enclosing scope
-// attached to the function as _string_annotations -- a dict of them for
-// __annotate__, a single one for an evaluate function:
-//
-//     if format == VALUE and not PEP 563: return <the strings, evaluated>
-//     if format == VALUE or format == STRING: return the strings
-//     raise NotImplementedError
-//
-// Evaluating means handing the executing function to annotationlib, which uses
-// its globals and closure as the environment. PEP 563 only concerns
-// __annotate__; a type alias value or type param bound is evaluated either way.
+// Build an __annotate__ or evaluate function from the constant the compiler
+// emitted for it, taking globals from the defining frame the way MAKE_FUNCTION
+// does. The annotation strings arrive separately, in the
+// INTRINSIC_SET_STRING_ANNOTATIONS on the next instruction.
 static PyObject *
-annotate_impl(PyThreadState *tstate, PyObject *format, bool is_evaluate)
+make_annotate(PyThreadState *tstate, PyObject *payload)
 {
     _PyInterpreterFrame *frame = tstate->current_frame;
     assert(frame != NULL);
-    assert(PyStackRef_FunctionCheck(frame->f_funcobj));
-    PyObject *func = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
-    PyCodeObject *co = _PyFrame_GetCode(frame);
-    assert(co->co_argcount == 1);
-
-    int is_value = format_equals(format, _Py_ANNOTATE_FORMAT_VALUE);
-    if (is_value < 0) {
-        return NULL;
-    }
-    if (is_value
-        && (is_evaluate || !(co->co_flags & CO_FUTURE_ANNOTATIONS)))
-    {
-        PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
-                                                         "_annotate_value");
-        if (impl == NULL) {
-            return NULL;
-        }
-        PyObject *res = PyObject_CallFunctionObjArgs(
-            impl, func, is_evaluate ? Py_True : Py_False, NULL);
-        Py_DECREF(impl);
-        return res;
-    }
-    if (!is_value) {
-        int is_string = format_equals(format, _Py_ANNOTATE_FORMAT_STRING);
-        if (is_string < 0) {
-            return NULL;
-        }
-        if (!is_string) {
-            _PyErr_SetString(tstate, PyExc_NotImplementedError, "");
-            return NULL;
-        }
-    }
-    PyObject *annos;
-    if (PyObject_GetOptionalAttr(func, &_Py_ID(_string_annotations),
-                                 &annos) < 0) {
-        return NULL;
-    }
-    if (annos == NULL) {
-        // Only reachable by building a function out of a compiler-generated
-        // code object by hand, which skips the intrinsic that attaches them.
-        _PyErr_SetString(tstate, PyExc_SystemError,
-                         "annotation function has no _string_annotations");
-        return NULL;
-    }
-    return annos;
-}
-
-static PyObject *
-annotate(PyThreadState *tstate, PyObject *format)
-{
-    return annotate_impl(tstate, format, false);
-}
-
-static PyObject *
-evaluate(PyThreadState *tstate, PyObject *format)
-{
-    return annotate_impl(tstate, format, true);
+    return _PyAnnotate_New(payload, NULL, frame->f_globals);
 }
 
 
@@ -326,8 +248,7 @@ _PyIntrinsics_UnaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SUBSCRIPT_GENERIC, _Py_subscript_generic)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_TYPEALIAS, _Py_make_typealias)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_BUILD_FROZENSET, make_frozenset)
-    INTRINSIC_FUNC_ENTRY(INTRINSIC_EVALUATE, evaluate)
-    INTRINSIC_FUNC_ENTRY(INTRINSIC_ANNOTATE, annotate)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_MAKE_ANNOTATE, make_annotate)
 };
 
 
@@ -340,30 +261,27 @@ no_intrinsic2(PyThreadState* tstate, PyObject *unused1, PyObject *unused2)
     return NULL;
 }
 
-// Attach the annotation source strings to a freshly built __annotate__ or
-// evaluate function. They go in the function's __dict__ rather than its
-// signature so that it keeps the (format, /) signature PEP 649 documents;
-// annotate_impl() reads them back out.
-// The strings are pushed before the function is built, so they are the deeper
-// of the intrinsic's two operands.
+// make_annotate() for a scope whose annotations reference names from an
+// enclosing function. The cells are pushed before the payload, so they are the
+// deeper of the intrinsic's two operands.
+static PyObject *
+make_annotate_closure(PyThreadState *tstate, PyObject *closure,
+                      PyObject *payload)
+{
+    assert(PyTuple_Check(closure));
+    _PyInterpreterFrame *frame = tstate->current_frame;
+    assert(frame != NULL);
+    return _PyAnnotate_New(payload, closure, frame->f_globals);
+}
+
+// Hand the annotation source strings to a freshly built __annotate__ or
+// evaluate function. The strings are pushed before it is built, so they are
+// the deeper of the intrinsic's two operands.
 static PyObject *
 set_string_annotations(PyThreadState *unused, PyObject *annos, PyObject *func)
 {
-    assert(PyFunction_Check(func));
-    if (PyObject_SetAttr(func, &_Py_ID(_string_annotations), annos) < 0) {
-        return NULL;
-    }
-    return Py_NewRef(func);
-}
-
-// Attach the scope metadata annotationlib needs to evaluate this function's
-// annotation strings. Only class-scope annotations need any, so most annotate
-// functions never get this call.
-static PyObject *
-set_annotate_metadata(PyThreadState *unused, PyObject *func, PyObject *metadata)
-{
-    assert(PyFunction_Check(func));
-    if (PyObject_SetAttr(func, &_Py_ID(_annotate_metadata), metadata) < 0) {
+    assert(PyAnnotate_CheckExact(func));
+    if (_PyAnnotate_SetStrings(func, annos) < 0) {
         return NULL;
     }
     return Py_NewRef(func);
@@ -401,7 +319,7 @@ _PyIntrinsics_BinaryFunctions[] = {
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_FUNCTION_TYPE_PARAMS, _Py_set_function_type_params)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_TYPEPARAM_DEFAULT, _Py_set_typeparam_default)
     INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_STRING_ANNOTATIONS, set_string_annotations)
-    INTRINSIC_FUNC_ENTRY(INTRINSIC_SET_ANNOTATE_METADATA, set_annotate_metadata)
+    INTRINSIC_FUNC_ENTRY(INTRINSIC_MAKE_ANNOTATE_CLOSURE, make_annotate_closure)
 };
 
 #undef INTRINSIC_FUNC_ENTRY
