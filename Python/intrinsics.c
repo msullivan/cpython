@@ -217,6 +217,7 @@ make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
     return _PySet_Freeze(set);
 }
 
+// XXX: TODO: DESLOP
 // Build an __annotate__ or evaluate function from the constant the compiler
 // emitted for it, taking globals from the defining frame the way MAKE_FUNCTION
 // does. The annotation strings arrive separately, in the
@@ -261,6 +262,7 @@ no_intrinsic2(PyThreadState* tstate, PyObject *unused1, PyObject *unused2)
     return NULL;
 }
 
+// XXX: TODO: DESLOP
 // make_annotate() for a scope whose annotations reference names from an
 // enclosing function. The cells are pushed before the payload, so they are the
 // deeper of the intrinsic's two operands.
@@ -274,6 +276,7 @@ make_annotate_closure(PyThreadState *tstate, PyObject *closure,
     return _PyAnnotate_New(payload, closure, frame->f_globals);
 }
 
+// XXX: TODO: DESLOP
 // Hand the annotation source strings to a freshly built __annotate__ or
 // evaluate function. The strings are pushed before it is built, so they are
 // the deeper of the intrinsic's two operands.

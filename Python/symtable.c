@@ -2061,6 +2061,7 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
                     return 0;
                 }
             }
+            // XXX: TODO: DESLOP
             // A simple annotation in a class or module body is stringified
             // where it appears and stored into __conditional_annotations__,
             // which __annotate__ then hands back out. Only the annotations

@@ -960,6 +960,7 @@ _PyCompile_LookupArg(compiler *c, PyCodeObject *co, PyObject *name)
         arg = dict_lookup_arg(c->u->u_metadata.u_freevars, name);
     }
     if (arg == -1 && !PyErr_Occurred()) {
+        // XXX: TODO: DESLOP
         // co is NULL when the child scope produced no code object.
         PyObject *freevars = co == NULL ? NULL : _PyCode_GetFreevars(co);
         if (freevars == NULL) {

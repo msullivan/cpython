@@ -704,6 +704,7 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
     return SUCCESS;
 }
 
+// XXX: TODO: DESLOP
 // Set to 1 to restore the eager handling of class and module annotations under
 // "from __future__ import annotations": the annotation strings are stored
 // straight into __annotations__ by the class or module body and no __annotate__
@@ -713,6 +714,7 @@ codegen_enter_scope(compiler *c, identifier name, int scope_type,
 // closure and no format-checking prologue.
 #define EAGER_FUTURE_ANNOTATIONS 0
 
+// XXX: TODO: DESLOP
 // Collect what annotationlib needs in order to evaluate this scope's
 // annotation strings the way the original expressions would have been
 // evaluated: the enclosing class's private name for mangling, the names
@@ -751,6 +753,7 @@ codegen_annotation_metadata(compiler *c, PyObject **metadata)
     if (!private) {
         private = Py_None;
     }
+    // XXX: TODO: DESLOP
     // annotationlib assumes exactly these defaults when the attribute is
     // absent, so leave it off rather than pay for it in every __annotate__ in
     // the module.
@@ -777,6 +780,7 @@ codegen_annotation_metadata(compiler *c, PyObject **metadata)
     return *metadata == NULL ? ERROR : SUCCESS;
 }
 
+// XXX: TODO: DESLOP
 // The free variables of the annotation scope we are currently in, in the order
 // a code object would have laid them out in co_localsplusnames. The annotate
 // object zips them against its closure to rebuild the environment the
@@ -806,6 +810,7 @@ codegen_annotation_freevars(compiler *c)
     return freevars;
 }
 
+// XXX: TODO: DESLOP
 // Everything about an annotation function that is known at compile time, as
 // one constant: the bare qualname when there is nothing else to say, which is
 // the majority of them, and otherwise a tuple. Unpacked by unpack_payload() in
@@ -838,6 +843,7 @@ codegen_emit_annotate(compiler *c, location loc, PyObject *freevars,
 {
     Py_ssize_t nfree = PyTuple_GET_SIZE(freevars);
     for (Py_ssize_t i = 0; i < nfree; i++) {
+        /* XXX: TODO: DESLOP */
         /* Bypass codegen_nameop because it would generate LOAD_DEREF but
            LOAD_CLOSURE is needed. */
         int arg = _PyCompile_LookupArg(c, NULL, PyTuple_GET_ITEM(freevars, i));
@@ -858,6 +864,7 @@ codegen_emit_annotate(compiler *c, location loc, PyObject *freevars,
     return SUCCESS;
 }
 
+// XXX: TODO: DESLOP
 // Emit a complete __annotate__ or evaluate function, given the annotation
 // source strings already on the stack; the function replaces them there.
 //
@@ -878,6 +885,7 @@ codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
                             key, loc.lineno, NULL, NULL));
     assert(!SYMTABLE_ENTRY(c)->ste_has_docstring);
 
+    // XXX: TODO: DESLOP
     // PEP 563 only concerns __annotate__; a type alias value or a type param
     // bound is evaluated either way.
     int flags = 0;
@@ -888,6 +896,7 @@ codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
         flags |= ANNOTATE_FUTURE;
     }
 
+    // XXX: TODO: DESLOP
     // Collected while the symtable entry and the private name are still this
     // scope's.
     PyObject *qualname = Py_NewRef(_PyCompile_Qualname(c));
@@ -899,6 +908,7 @@ codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
     {
         payload = codegen_annotate_payload(qualname, freevars, metadata, flags);
     }
+    // XXX: TODO: DESLOP
     // Unconditionally, and before anything is emitted into the enclosing
     // scope, so that a caller wrapping this in RETURN_IF_ERROR_IN_SCOPE leaves
     // its own scope rather than this one.
@@ -916,6 +926,7 @@ codegen_annotate_func(compiler *c, location loc, void *key, PyObject *name,
     return ret;
 }
 
+// XXX: TODO: DESLOP
 // Build the __annotate__ function for a class or module body. The annotations
 // themselves are not in it: the body stringifies each one where it appears and
 // stores it into __conditional_annotations__ (see codegen_annassign), and that
@@ -934,6 +945,7 @@ codegen_process_deferred_annotations(compiler *c, location loc)
         RETURN_IF_ERROR(_PyCompile_StartAnnotationSetup(c));
     }
 
+    // XXX: TODO: DESLOP
     // It's possible that ste_annotations_block is set but there are no
     // deferred annotations, because the former is still set if there are only
     // non-simple annotations (i.e., annotations for attributes, subscripts, or
@@ -981,6 +993,7 @@ _PyCodegen_Module(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_inter
         ADDOP_I(c, loc, BUILD_MAP, 0);
         ADDOP_N(c, loc, STORE_NAME, &_Py_ID(__conditional_annotations__), names);
     }
+    // XXX: TODO: DESLOP
     // The __annotate__ function is built up here, at the top of the module,
     // rather than where codegen_body() reaches the end of it; the annotation
     // strings get to it through the dict just stored, which the body fills in
@@ -997,6 +1010,7 @@ codegen_body(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_interactiv
     if (EAGER_FUTURE_ANNOTATIONS
         && (FUTURE_FEATURES(c) & CO_FUTURE_ANNOTATIONS)
         && ste->ste_annotations_used) {
+        /* XXX: TODO: DESLOP */
         /* Every annotated class and module gets an eager __annotations__
          * for codegen_annassign to store the annotation strings into. */
         ADDOP(c, loc, SETUP_ANNOTATIONS);
@@ -1027,6 +1041,7 @@ codegen_body(compiler *c, location loc, asdl_stmt_seq *stmts, bool is_interactiv
     for (Py_ssize_t i = first_instr; i < asdl_seq_LEN(stmts); i++) {
         VISIT(c, stmt, (stmt_ty)asdl_seq_GET(stmts, i));
     }
+    // XXX: TODO: DESLOP
     // Annotations are collected in a separate pass and turned into an
     // __annotate__ function, so that classes and modules are lazy in the same
     // way functions are. See PEP 649. Under "from __future__ import
@@ -1225,12 +1240,14 @@ codegen_collect_annotations(compiler *c, location loc,
     return 0;
 }
 
+/* XXX: TODO: DESLOP */
 /* Collect the annotations into one frozendict constant and push a real dict
    copy of it, to become __annotate__'s _string_annotations. */
 static int
 codegen_push_annotation_strings(compiler *c, location loc,
                                 arguments_ty args, expr_ty returns)
 {
+    // XXX: TODO: DESLOP
     // Emitted before anything is allocated, so that no failure below can leak
     // the frozendict.
     ADDOP_I(c, loc, BUILD_MAP, 0);
@@ -1247,6 +1264,7 @@ codegen_push_annotation_strings(compiler *c, location loc,
     if (frozen == NULL) {
         return ERROR;
     }
+    // XXX: TODO: DESLOP
     // Copy the constant into a real dict here, at definition time, so that
     // __annotate__ only has to hand out what it was given.
     ADDOP_LOAD_CONST_NEW(c, loc, frozen);
@@ -5824,6 +5842,7 @@ codegen_annassign(compiler *c, stmt_ty s)
                 ADDOP(c, loc, STORE_SUBSCR);
             }
             else {
+                // XXX: TODO: DESLOP
                 // __conditional_annotations__[name] = "<annotation source>".
                 // The __annotate__ function built by
                 // codegen_process_deferred_annotations() hands this dict out;

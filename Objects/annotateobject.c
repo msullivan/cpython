@@ -11,6 +11,7 @@
 
 #define PyAnnotateObject_CAST(op)  ((PyAnnotateObject *)(op))
 
+// XXX: TODO: DESLOP
 // The static half of an annotation function, produced by the compiler as a
 // single constant: either the qualname on its own, or a tuple of it with
 // whatever else the scope needs.
@@ -137,6 +138,7 @@ annotate_repr(PyObject *op)
 static int
 format_equals(PyObject *format, long expected)
 {
+    // XXX: TODO: DESLOP
     // Rich comparison rather than reading the int directly, so that a Format
     // enum member, a plain int and anything else that compares equal all
     // behave the way the COMPARE_OP this replaced did.
@@ -149,6 +151,7 @@ format_equals(PyObject *format, long expected)
     return res;
 }
 
+// XXX: TODO: DESLOP
 // The whole PEP 649 protocol for a compiler-generated annotation function.
 // Both kinds produce annotation source strings, which the enclosing scope
 // handed over at definition time:
@@ -224,6 +227,7 @@ static PyObject *
 annotate_get_name(PyObject *op, void *Py_UNUSED(closure))
 {
     PyObject *qualname = PyAnnotateObject_CAST(op)->ann_qualname;
+    // XXX: TODO: DESLOP
     // The compiler builds a qualname by appending ".<name>" to the enclosing
     // one, so the last component is always the name.
     Py_ssize_t len = PyUnicode_GET_LENGTH(qualname);
@@ -257,6 +261,7 @@ annotate_get_module(PyObject *op, void *Py_UNUSED(closure))
 static PyObject *
 annotate_get_signature(PyObject *op, void *Py_UNUSED(closure))
 {
+    // XXX: TODO: DESLOP
     // inspect.signature() cannot work this out for itself: an instance of a C
     // type takes neither the __text_signature__ path nor the functionlike one.
     PyAnnotateObject *self = PyAnnotateObject_CAST(op);

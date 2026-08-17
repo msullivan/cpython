@@ -519,6 +519,7 @@ class TestStringFormat(unittest.TestCase):
         )
 
     def test_fstrings(self):
+        # XXX: TODO: DESLOP
         # Since __annotate__ returns the source of the annotations, f-strings
         # can be stringified faithfully.
         def f(fstring: f"{a}"):
@@ -537,6 +538,7 @@ class TestStringFormat(unittest.TestCase):
         )
 
     def test_shenanigans(self):
+        # XXX: TODO: DESLOP
         # Since __annotate__ returns the source of the annotations, even
         # annotations that perform runtime shenanigans stringify faithfully.
         def f(x: x | (1).__class__, y: (1).__class__):
@@ -1426,6 +1428,7 @@ class TestCallEvaluateFunction(unittest.TestCase):
                 raise exc
             return undefined
 
+        # XXX: TODO: DESLOP
         # The evaluate function supports only the VALUE format, so
         # every format ends up evaluating the value and raising NameError.
         with self.assertRaises(NameError):
@@ -1435,6 +1438,7 @@ class TestCallEvaluateFunction(unittest.TestCase):
         with self.assertRaises(NameError):
             annotationlib.call_evaluate_function(evaluate, Format.STRING)
 
+        # XXX: TODO: DESLOP
         # Evaluate functions that support the STRING format (like
         # compiler-generated ones) provide STRING directly and FORWARDREF
         # by evaluation of the string.
@@ -1457,6 +1461,7 @@ class TestCallEvaluateFunction(unittest.TestCase):
         )
 
     def test_string_evaluation(self):
+        # XXX: TODO: DESLOP
         # Evaluating the string would raise an AttributeError, so the
         # FORWARDREF format returns a ForwardRef.
         def evaluate_union(format, exc=NotImplementedError):
@@ -1507,6 +1512,7 @@ class TestCallAnnotateFunction(unittest.TestCase):
         self.assertEqual(annotations, {"x": float})
 
     def test_user_annotate_forwardref_string(self):
+        # XXX: TODO: DESLOP
         # If Format.FORWARDREF is not supported, evaluate the STRING format
         # output before falling back to Format.VALUE
         def annotate(format, /):
@@ -1560,6 +1566,7 @@ class TestCallAnnotateFunction(unittest.TestCase):
         self.assertEqual(annotations, {"x": "float"})
 
     def test_user_annotate_fake_globals_never_called(self):
+        # XXX: TODO: DESLOP
         # annotationlib never calls annotate functions with the legacy
         # VALUE_WITH_FAKE_GLOBALS format.
         called_formats = []
@@ -1639,6 +1646,7 @@ class TestCallAnnotateFunction(unittest.TestCase):
         annotations = annotationlib.call_annotate_function(Annotate(), Format.STRING)
         self.assertEqual(annotations, {"x": "float"})
 
+        # XXX: TODO: DESLOP
         # FORWARDREF works by evaluating the STRING format output, even
         # though the callable has no __globals__ or __closure__.
         annotations = annotationlib.call_annotate_function(
@@ -1829,6 +1837,7 @@ class TestGetAnnotateFromClassNamespace(unittest.TestCase):
             from __future__ import annotations
 
             class HasFutureAnnotations(metaclass=Meta):
+                # XXX: TODO: DESLOP
                 # Classes get an __annotate__ under PEP 563 too; it returns
                 # the annotation strings for every format.
                 expected_annotate = True

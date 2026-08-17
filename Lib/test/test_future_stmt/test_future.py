@@ -227,6 +227,7 @@ class AnnotationsFutureTestCase(unittest.TestCase):
 
     def getActual(self, annotation):
         scope = {}
+        # XXX: TODO: DESLOP
         # A single namespace, as a module has: __annotate__ resolves
         # __conditional_annotations__ through its __globals__.
         exec(self.template.format(ann=annotation), scope)
@@ -234,6 +235,7 @@ class AnnotationsFutureTestCase(unittest.TestCase):
         func_arg_ann = scope['g'].__annotations__['arg']
         async_func_ret_ann = scope['f2'].__annotations__['return']
         async_func_arg_ann = scope['g2'].__annotations__['arg']
+        # XXX: TODO: DESLOP
         # Module annotations are deferred into __annotate__ even under PEP 563,
         # so a bare exec namespace has no eager __annotations__ dict.
         module_anns = annotationlib.call_annotate_function(

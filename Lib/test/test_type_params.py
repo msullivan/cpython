@@ -154,6 +154,7 @@ class TypeParamsInvalidTest(unittest.TestCase):
             class My[X](object): ...
 
     def test_codegen_error_in_type_param_bound_is_deferred(self):
+        # XXX: TODO: DESLOP
         # This should not crash, see gh-145187. Because evaluate functions
         # contain only strings, errors detected only by expression codegen
         # are deferred until the bound is evaluated.

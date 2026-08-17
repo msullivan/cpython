@@ -722,6 +722,7 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
     except NotImplementedError:
         pass
     if format == Format.STRING:
+        # XXX: TODO: DESLOP
         # The annotate function does not support the STRING format natively
         # (e.g., a manually written annotate function that supports only
         # VALUE). Fall back to converting the values to strings.
@@ -730,6 +731,7 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
             return _stringify_single(result)
         return annotations_to_string(result)
     elif format == Format.FORWARDREF:
+        # XXX: TODO: DESLOP
         # If the annotate function supports the STRING format (as
         # compiler-generated annotate and evaluate functions do), evaluate
         # the strings it returns, turning unresolvable names into
@@ -741,6 +743,7 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
         except NotImplementedError:
             return annotate(Format.VALUE)
     elif format == Format.VALUE:
+        # XXX: TODO: DESLOP
         # An annotate function may implement only STRING. If so, use its
         # globals and closure to evaluate the strings back to values.
         try:
@@ -845,6 +848,7 @@ class _ClassScopeTransformer(ast.NodeTransformer):
         return ast.copy_location(call, node)
 
     def visit_Lambda(self, node):
+        # XXX: TODO: DESLOP
         # Defaults execute in the annotation scope; the body is a nested scope
         # and therefore cannot see the class namespace.
         node.args.defaults = [self.visit(default) for default in node.args.defaults]
@@ -855,6 +859,7 @@ class _ClassScopeTransformer(ast.NodeTransformer):
         return node
 
     def _visit_comprehension(self, node):
+        # XXX: TODO: DESLOP
         # Only the outermost iterable executes in the containing annotation
         # scope. The rest executes in the comprehension's nested scope.
         if node.generators:
@@ -870,6 +875,7 @@ class _ClassScopeTransformer(ast.NodeTransformer):
 def _get_annotate_metadata(annotate):
     metadata = getattr(annotate, "_annotate_metadata", None)
     if metadata is None:
+        # XXX: TODO: DESLOP
         # The compiler only attaches this to annotate functions that need it,
         # which is those for annotations in a class body.
         return _AnnotateMetadata()
@@ -921,6 +927,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     globals = getattr(annotate, "__globals__", None)
     closure = getattr(annotate, "__closure__", None)
     if closure:
+        # XXX: TODO: DESLOP
         # Compiler-generated annotation functions carry their free variable
         # names directly; hand-written ones are real functions.
         freevars = getattr(annotate, "__freevars__", None)
@@ -931,6 +938,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         cells = None
     metadata = _get_annotate_metadata(annotate)
 
+    # XXX: TODO: DESLOP
     # Build the evaluation environment. The globals are the function's
     # globals overlaid with the values of the closure cells, which take
     # precedence (names of unbound cells shadow the globals so that
@@ -941,6 +949,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
     # lazily evaluated nested scopes (lambdas, comprehensions) inside
     # the annotation.
 
+    # XXX: TODO: DESLOP
     # Names that were subject to private name mangling
     # appear in the environment under their mangled name, but occur
     # unmangled in the annotation strings, so alias them.
@@ -982,6 +991,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             and string in cells
             and not (class_locals is not None and string in class_locals)
         ):
+            # XXX: TODO: DESLOP
             # A reference to a single closed-over name; hold on to the
             # cell itself so the reference stays evaluatable (and so that
             # references to the same name compare equal).
@@ -992,6 +1002,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
 
     def eval_one(string):
         if not isinstance(string, str):
+            # XXX: TODO: DESLOP
             # Be lenient with annotate functions that return non-string
             # values in the STRING format.
             return string
@@ -1000,6 +1011,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
             string in unbound_names
             and not (class_locals is not None and string in class_locals)
         ):
+            # XXX: TODO: DESLOP
             # A free variable that is not (yet) bound in the enclosing
             # scope; referencing it raises NameError, like running the
             # original annotation expression would.
@@ -1019,6 +1031,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
                     class_locals,
                 )
             return eval(fwdref.__forward_code__, globals=env, locals=env)
+        # XXX: TODO: DESLOP
         # FORWARDREF. First try to evaluate the whole annotation; if that
         # fails, evaluate it again in an environment where every name
         # lookup produces a _Stringifier, so that unresolvable names embedded
@@ -1035,6 +1048,7 @@ def _eval_string_annotate(annotate, format, owner, _is_evaluate=False):
         except Exception:
             pass
         if string.isidentifier():
+            # XXX: TODO: DESLOP
             # A single unresolvable name; the stringifier pass below
             # cannot improve on the ForwardRef we already have.
             return fwdref
@@ -1086,6 +1100,7 @@ def _annotate_signature(is_evaluate):
         return _annotate_signatures[is_evaluate]
     except KeyError:
         pass
+    # XXX: TODO: DESLOP
     # Only ever reached from inspect.signature(), so inspect is already
     # imported and this cannot deepen the import cycle.
     import inspect
