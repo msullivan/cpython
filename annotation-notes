@@ -1,0 +1,46 @@
+I find myself needing something along these lines for https://discuss.python.org/t/pep-827-type-manipulation/106353 and have been working on a prototype for a variant of this that takes a slightly different approach in the tradeoff space (*only* store the strings, include enough metadata to construct values from them -- speed is bad but space should be reduced).
+
+While working on this I found an answer to one of the questions that Jelle was asking:
+
+The `__annotate__` function plus a string or AST of the type annotation is *almost* but not quite enough to always reconstruct the type annotation. Or to put differently: I think there's a decent chance that it might work for every real-world use case, but it won't pass the cpython test suite.
+
+In particular, there are some naming related things that get expressed in the bytecode currently but not any of the tables that are currenly exported. Here is the other annoying stuff that we need:
+ 1. We need the list of `global` declarations that are in scope
+ 2. If the declaration is in a class, we need the class's name in order to correctly perform mangling of `__private` names. (This is maybe my least favorite python feature.)
+ 3. Evaluating the bounds for type variables in generic classes requires exposing the `ste_mangled_names` table from the symbol table. This is because `class C[__X, __Y: __X, __Z: __SomethingElse]` will want to mangle the reference to `__X` but not to `__SomethingElse`. This is kind of wild but it is what it is.
+
+
+For 1. consider:
+```
+x = "global"
+def outer():
+    x = "nonlocal"
+    class Cls:
+        global x
+        ann: x
+    Cls.x = "class"
+    return Cls
+```
+The annotation on `ann` should be "global", not "class". If it wasn't for the `global` declaration, then it would be "class.
+Though this one really is incredibly pathological, because it requires assigning to the class from outside of it: if you just had a `x = "class"` inside the class, it would be affected by the `global` also.
+
+--
+
+This is pretty annoying but not a serious problem, though. We can store all that metadata along with the `__annotate__` function.
+
+
+
+--
+
+
+
+nonlocal seems to never matter and honestly I don't understand why yet.
+
+
+---
+
+code TODO:
+
+- DESLOP
+
+ann_qualname -- ok but it *isn't* qualname, is it? that seems wrong.
