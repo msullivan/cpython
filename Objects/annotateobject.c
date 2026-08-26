@@ -11,10 +11,8 @@
 
 #define PyAnnotateObject_CAST(op)  ((PyAnnotateObject *)(op))
 
-// XXX: TODO: DESLOP
-// The static half of an annotation function, produced by the compiler as a
-// single constant: either the qualname on its own, or a tuple of it with
-// whatever else the scope needs.
+// unpack the static metadata for an annotation. it is either just the
+// qualname a tuple of (qualname, freevars, flags, maybe scope metadata).
 static int
 unpack_payload(PyObject *payload, PyAnnotateObject *self)
 {
@@ -60,6 +58,10 @@ unpack_payload(PyObject *payload, PyAnnotateObject *self)
     return 0;
 }
 
+// annotate arguments are:
+// * payload: static metadata; see unpack_payload above
+// * closure: tuple of cells for freevars
+// * globals: globals dict
 PyObject *
 _PyAnnotate_New(PyObject *payload, PyObject *closure, PyObject *globals)
 {
@@ -80,6 +82,8 @@ _PyAnnotate_New(PyObject *payload, PyObject *closure, PyObject *globals)
     return (PyObject *)self;
 }
 
+// setting the strings is its own operation because currently we only
+// support up to two argument intrinsics
 int
 _PyAnnotate_SetStrings(PyObject *op, PyObject *strings)
 {
@@ -138,10 +142,8 @@ annotate_repr(PyObject *op)
 static int
 format_equals(PyObject *format, long expected)
 {
-    // XXX: TODO: DESLOP
-    // Rich comparison rather than reading the int directly, so that a Format
-    // enum member, a plain int and anything else that compares equal all
-    // behave the way the COMPARE_OP this replaced did.
+    // Do a rich comparision so that behavior matches even when format
+    // is an enum or something else weird.
     PyObject *o = PyLong_FromLong(expected);
     if (o == NULL) {
         return -1;
@@ -184,6 +186,7 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
         format = _PyLong_GetOne();
     }
     else {
+        // XXX: this message is wrong:
         PyErr_Format(PyExc_TypeError,
                      "%U() takes exactly one argument (%zd given)",
                      self->ann_qualname, nargs);
@@ -194,6 +197,8 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
     if (is_value < 0) {
         return NULL;
     }
+    // evaluate_FOO() do not get stringified when ANNOTATE_FUTURE is set, but
+    // __annotate__ functions do
     if (is_value && (is_evaluate || !(self->ann_flags & ANNOTATE_FUTURE))) {
         PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
                                                          "_annotate_value");
@@ -211,7 +216,7 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
             return NULL;
         }
         if (!is_string) {
-            PyErr_SetString(PyExc_NotImplementedError, "");
+            PyErr_SetNone(PyExc_NotImplementedError);
             return NULL;
         }
     }
@@ -227,9 +232,7 @@ static PyObject *
 annotate_get_name(PyObject *op, void *Py_UNUSED(closure))
 {
     PyObject *qualname = PyAnnotateObject_CAST(op)->ann_qualname;
-    // XXX: TODO: DESLOP
-    // The compiler builds a qualname by appending ".<name>" to the enclosing
-    // one, so the last component is always the name.
+    // The name is the last component of the potentially-dotted qualname.
     Py_ssize_t len = PyUnicode_GET_LENGTH(qualname);
     Py_ssize_t dot = PyUnicode_FindChar(qualname, '.', 0, len, -1);
     if (dot < 0) {
