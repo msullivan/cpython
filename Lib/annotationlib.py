@@ -841,8 +841,10 @@ class _ClassScopeTransformer(ast.NodeTransformer):
         if node.id in self.bypass_names:
             return node
         call = ast.Call(
-            func=ast.Name(id=_CLASS_SCOPE_LOOKUP, ctx=ast.Load()),
-            args=[ast.Constant(node.id)],
+            func=ast.copy_location(
+                ast.Name(id=_CLASS_SCOPE_LOOKUP, ctx=ast.Load()), node
+            ),
+            args=[ast.copy_location(ast.Constant(node.id), node)],
             keywords=[],
         )
         return ast.copy_location(call, node)
@@ -890,7 +892,6 @@ def _eval_in_class_annotation_scope(
         metadata.private_class_name, metadata.mangled_names
     ).visit(tree)
     tree = _ClassScopeTransformer(metadata.global_names).visit(tree)
-    ast.fix_missing_locations(tree)
 
     class_locals = class_locals or {}
     def class_scope_lookup(name):
