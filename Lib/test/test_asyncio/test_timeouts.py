@@ -110,6 +110,14 @@ class TimeoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cm.expired())
         self.assertTrue(t0 >= cm.when() <= t1)
 
+    async def test_timeout_pending_cancel_applies(self):
+        # gh-134471
+        task = asyncio.current_task()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            async with asyncio.timeout(0) as cm:
+                await asyncio.sleep(1)
+
     async def test_foreign_exception_passed(self):
         with self.assertRaises(KeyError):
             async with asyncio.timeout(0.01) as cm:
