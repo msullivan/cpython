@@ -87,6 +87,7 @@ class Timeout:
         task = tasks.current_task()
         if task is None:
             raise RuntimeError("Timeout should be used inside a task")
+        self._must_cancel = await self._get_must_cancel(task)
         self._state = _State.ENTERED
         self._task = task
         self._cancelling = self._task.cancelling()
@@ -108,7 +109,11 @@ class Timeout:
         if self._state is _State.EXPIRING:
             self._state = _State.EXPIRED
 
-            if self._task.uncancel() <= self._cancelling and exc_type is not None:
+            if (
+                self._task.uncancel() <= self._cancelling
+                and exc_type is not None
+                and not self._must_cancel
+            ):
                 # Since there are no new cancel requests, we're
                 # handling this.
                 if issubclass(exc_type, exceptions.CancelledError):
@@ -129,6 +134,24 @@ class Timeout:
         self._state = _State.EXPIRING
         # drop the reference early
         self._timeout_handler = None
+
+    @staticmethod
+    async def _get_must_cancel(task: tasks.Task) -> bool:
+        # task must be current task
+        if hasattr(task, '_must_cancel'):
+            return task._must_cancel
+
+        # To support duck-typed Tasks that don't have _must_cancel,
+        # compute must_cancel by sleep(0)ing and seeing if we get
+        # cancelled.
+        must_cancel = False
+        try:
+            await tasks.sleep(0)
+        except exceptions.CancelledError:
+            must_cancel = True
+            task.cancel()
+
+        return must_cancel
 
     @staticmethod
     def _insert_timeout_error(exc_val: BaseException) -> None:
