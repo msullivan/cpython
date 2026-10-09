@@ -2076,6 +2076,8 @@ def _signature_is_builtin(obj):
     return (isbuiltin(obj) or
             ismethoddescriptor(obj) or
             isinstance(obj, _NonUserDefinedCallables) or
+            isinstance(obj, types.AnnotateObjectType) or
+            obj is types.AnnotateObjectType or
             # Can't test 'isinstance(type)' here, as it would
             # also be True for regular python classes.
             # Can't use the `in` operator here, as it would

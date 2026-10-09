@@ -65,9 +65,6 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
 PyObject *
 _PyAnnotate_New(PyObject *asts, PyObject *globals, PyObject *data)
 {
-    if (_PyAnnotate_Init() < 0) {
-        return NULL;
-    }
     PyAnnotateObject *self = PyObject_GC_New(PyAnnotateObject, &PyAnnotate_Type);
     if (self == NULL) {
         return NULL;
@@ -291,27 +288,19 @@ annotate_get_module(PyObject *op, void *Py_UNUSED(closure))
 }
 
 static PyObject *
-annotate_get_signature(PyObject *op, void *Py_UNUSED(closure))
+annotate_get_text_signature(PyObject *op, void *Py_UNUSED(closure))
 {
-    // XXX: TODO: DESLOP
-    // inspect.signature() cannot work this out for itself: an instance of a C
-    // type takes neither the __text_signature__ path nor the functionlike one.
     PyAnnotateObject *self = PyAnnotateObject_CAST(op);
-    PyObject *impl = PyImport_ImportModuleAttrString("annotationlib",
-                                                     "_annotate_signature");
-    if (impl == NULL) {
-        return NULL;
-    }
-    PyObject *res = PyObject_CallOneArg(
-        impl, PyUnicode_Check(self->ann_asts) ? Py_True : Py_False);
-    Py_DECREF(impl);
-    return res;
+    const char *signature = PyUnicode_Check(self->ann_asts)
+        ? "(format=1, /)"
+        : "(format, /)";
+    return PyUnicode_FromString(signature);
 }
 
 static PyGetSetDef annotate_getsetlist[] = {
     {"__name__", annotate_get_name, NULL, NULL},
     {"__module__", annotate_get_module, NULL, NULL},
-    {"__signature__", annotate_get_signature, NULL, NULL},
+    {"__text_signature__", annotate_get_text_signature, NULL, NULL},
     {NULL}
 };
 
@@ -332,7 +321,10 @@ static PyMemberDef annotate_memberlist[] = {
 #undef ANN_OFF
 
 PyDoc_STRVAR(annotate_doc,
-"An __annotate__ function, or a function that evaluates a type alias\n\
+"annotate(asts, globals, data, /)\n\
+--\n\
+\n\
+An __annotate__ function, or a function that evaluates a type alias\n\
 value or a type parameter bound or default.\n\
 \n\
 Takes a single argument, a member of the annotationlib.Format enum, and\n\
