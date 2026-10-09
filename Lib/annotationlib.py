@@ -1362,89 +1362,95 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
     visit_GeneratorExp = _visit_comprehension
 
 
-class _CellMapping(collections.abc.Mapping):
-    """A mapping that holds cells and dereferences them on access."""
+class _AnnotationNamespace(collections.abc.Mapping):
+    """A mapping that combines globals, closure and classdict for an annotation."""
 
-    __slots__ = ("closure",)
+    __slots__ = ("globals", "cells", "classdict", "explicit_globals", "_in_inner_scope")
 
-    def __init__(self, freevars, closure):
-        self.closure = dict(zip(freevars, closure, strict=True))
+    def __init__(self, globals=None, cells=None, classdict=None, explicit_globals=None):
+        self.globals = globals or {}
+        self.cells = cells or {}
+        self.classdict = classdict or {}
+        self.explicit_globals = explicit_globals or set()
+        self._in_inner_scope = False
 
     def __getitem__(self, key):
-        cell = self.closure[key]
+        if key == _ANNOTATION_AST_SKIP_CLASS:
+            self._in_inner_scope = True
+            return self
+        if key not in self.explicit_globals and not self._in_inner_scope:
+            try:
+                return self.classdict[key]
+            except KeyError:
+                pass
+        self._in_inner_scope = False
         try:
-            return cell.cell_contents
+            return self.cells[key].cell_contents
+        except KeyError:
+            pass
         except ValueError:
             raise NameError(
                 f"cannot access free variable {key!r} where it is not "
                 "associated with a value in enclosing scope",
                 name=key,
             )
+        try:
+            return self.globals[key]
+        except KeyError:
+            pass
+        try:
+            return self.globals["__builtins__"][key]
+        except KeyError:
+            pass
+        raise KeyError(key)
 
     def __iter__(self):
-        return iter(self.closure)
+        yield from self.classdict
+        yield from self.cells
+        yield from self.globals
 
     def __len__(self):
-        return len(self.closure)
+        return len(self.classdict) + len(self.cells) + len(self.globals)
 
-
-def _namespace_from_annotate(annotate):
-    """Constructs the namespaces an annotation can be evaluated in.
-
-    Returns a namespace that combines the globals, closure and classdict of the
-    annotate function. If the annotate is defined in a class scope, it also
-    contains an inner namespace at `_ANNOTATION_AST_SKIP_CLASS` that can be used
-    to evaluate inner scopes (comprehensions and lambdas) where the enclosing
-    classdict is not visible.
-    """
-    globals = getattr(annotate, "__globals__", None)
-    closure = getattr(annotate, "__closure__", None)
-    freevars = getattr(annotate, "__freevars__", None)
-    if freevars is None:
-        code = getattr(annotate, "__code__", None)
-        if code is not None:
-            freevars = getattr(code, "co_freevars", None)
-    if closure is not None and freevars is not None:
-        cells = _CellMapping(freevars, closure)
-        try:
+    @classmethod
+    def from_annotate(cls, annotate):
+        globals = getattr(annotate, "__globals__", None)
+        closure = getattr(annotate, "__closure__", None)
+        freevars = getattr(annotate, "__freevars__", None)
+        explicit_globals = getattr(annotate, "_explicit_globals", None)
+        if freevars is None:
+            code = getattr(annotate, "__code__", None)
+            if code is not None:
+                freevars = getattr(code, "co_freevars", None)
+        if closure is not None and freevars is not None:
+            cells = dict(zip(freevars, closure, strict=True))
             classdict = cells.get("__classdict__", None)
-        except NameError:
+            if classdict is not None:
+                try:
+                    classdict = classdict.cell_contents
+                except NameError:
+                    classdict = None
+        else:
+            cells = None
             classdict = None
-    else:
-        cells = None
-        classdict = None
-    namespace = collections.ChainMap()
-    if classdict:
-        namespace.maps.append(classdict)
-    if cells:
-        namespace.maps.append(cells)
-    if globals:
-        namespace.maps.append(globals)
-    if "__builtins__" in globals:
-        namespace.maps.append(globals["__builtins__"])
-    else:
-        namespace.maps.append(builtins.__dict__)
-    if classdict:
-        inner = namespace.parents
-        namespace.maps.insert(0, { _ANNOTATION_AST_SKIP_CLASS: inner })
-    return namespace
+        return cls(globals=globals, cells=cells, classdict=classdict, explicit_globals=explicit_globals)
 
 
 class AnnotationAST:
-    __slots__ = ("ast", "namespace", "explicit_globals", "private_name", "mangled_names")
+    __slots__ = ("ast", "namespace", "private_name", "mangled_names")
 
     def __init__(
         self,
         ast,
         namespace=None,
-        explicit_globals=None,
         private_name=None,
         mangled_names=None,
     ):
         super().__init__()
         self.ast = ast
-        self.namespace = namespace if namespace is not None else {}
-        self.explicit_globals = explicit_globals
+        if not isinstance(namespace, _AnnotationNamespace):
+            namespace = _AnnotationNamespace(namespace)
+        self.namespace = namespace
         self.private_name = private_name
         self.mangled_names = mangled_names
 
@@ -1457,14 +1463,32 @@ class AnnotationAST:
         elif format == Format.STRING:
             return ast.unparse(self.ast)
         elif format == Format.FORWARDREF:
-            return ForwardRef(ast.unparse(self.ast))
+            module = self.namespace.globals.get("__name__", None)
+            ref = ForwardRef(ast.unparse(self.ast), module=module)
+            ref.__ast_node__ = self.ast
+            ref.__globals__ = self.namespace.globals
+            if len(self.namespace.cells) == 1:
+                ref.__cell__ = next(iter(self.namespace.cells.values()))
+            else:
+                ref.__cell__ = self.namespace.cells
+            return ref
+        elif format == Format.VALUE_WITH_FAKE_GLOBALS:
+            raise NotImplementedError
         if _ANNOTATION_AST_SKIP_CLASS in self.namespace:
             transformer = _AnnotationASTTransformer(
-                self.explicit_globals, self.private_name, self.mangled_names
+                self.namespace.explicit_globals, self.private_name, self.mangled_names
             )
             ann_ast = transformer.visit(self.ast)
         else:
             ann_ast = self.ast
+        if isinstance(ann_ast.body, ast.Starred):
+            ann_ast = ast.Expression(
+                ast.Subscript(
+                    ast.Tuple(elts=[ann_ast.body.value], ctx=ast.Load()),
+                    ast.Constant(0),
+                    ast.Load(),
+                )
+            )
         return eval(compile(ann_ast, "<annotation>", "eval"), globals={}, locals=self.namespace)
 
     def evaluate_type(self, format):

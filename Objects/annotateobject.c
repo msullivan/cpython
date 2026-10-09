@@ -65,6 +65,9 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
 PyObject *
 _PyAnnotate_New(PyObject *asts, PyObject *globals, PyObject *data)
 {
+    if (_PyAnnotate_Init() < 0) {
+        return NULL;
+    }
     PyAnnotateObject *self = PyObject_GC_New(PyAnnotateObject, &PyAnnotate_Type);
     if (self == NULL) {
         return NULL;
@@ -130,11 +133,11 @@ annotate_repr(PyObject *op)
 
 PyObject *
 _eval_ast(PyObject *ann_ast_class, PyObject *format, PyObject *ast, PyObject *namespace,
-    PyObject *explicit_globals, PyObject *private_name, PyObject *mangled_names)
+    PyObject *private_name, PyObject *mangled_names)
 {
     PyObject *ann_ast = PyObject_CallFunctionObjArgs(
-        ann_ast_class, ast, namespace, explicit_globals, private_name,
-        mangled_names, NULL);
+        ann_ast_class, ast, namespace, private_name, mangled_names, NULL
+    );
     if (!ann_ast) {
         return NULL;
     }
@@ -191,14 +194,14 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
     if (!parsed_asts) {
         return NULL;
     }
-    PyObject *make_namespace = PyImport_ImportModuleAttrString(
-        "annotationlib", "_namespace_from_annotate"
+    PyObject *namespace_class = PyImport_ImportModuleAttrString(
+        "annotationlib", "_AnnotationNamespace"
     );
-    if (!make_namespace) {
+    if (!namespace_class) {
         return NULL;
     }
-    PyObject *namespace = PyObject_CallFunctionObjArgs(make_namespace, self, NULL);
-    Py_DECREF(make_namespace);
+    PyObject *namespace = PyObject_CallMethodObjArgs(namespace_class, &_Py_ID(from_annotate), self, NULL);
+    Py_DECREF(namespace_class);
     if (!namespace) {
         return NULL;
     }
@@ -208,10 +211,6 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
     if (!annASTClass) {
         Py_DECREF(namespace);
         return NULL;
-    }
-    PyObject *explicit_globals = self->ann_explicit_globals;
-    if (!explicit_globals) {
-        explicit_globals = Py_None;
     }
     PyObject *private_name = self->ann_private_name;
     if (!private_name) {
@@ -225,7 +224,7 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
     if (is_evaluate) {
         assert(PyUnicode_Check(parsed_asts));
         result = _eval_ast(annASTClass, format, parsed_asts, namespace,
-            explicit_globals, private_name, mangled_names);
+            private_name, mangled_names);
     } else {
         assert(PyDict_Check(parsed_asts));
         result = PyDict_New();
@@ -236,7 +235,7 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
         Py_ssize_t pos = 0;
         while (PyDict_Next(parsed_asts, &pos, &key, &value)) {
             PyObject *evaluated = _eval_ast(annASTClass, format, value, namespace,
-                explicit_globals, private_name, mangled_names);
+                private_name, mangled_names);
             if (!evaluated) {
                 Py_DECREF(result);
                 result = NULL;
