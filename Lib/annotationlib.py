@@ -1399,8 +1399,8 @@ class _AnnotationNamespace(collections.abc.Mapping):
         except KeyError:
             pass
         try:
-            return self.globals["__builtins__"][key]
-        except KeyError:
+            return getattr(self.globals["__builtins__"], key)
+        except AttributeError:
             pass
         raise KeyError(key)
 
