@@ -1,6 +1,7 @@
 /* _types module */
 
 #include "Python.h"
+#include "pycore_annotateobject.h"  // PyAnnotate_Type
 #include "pycore_descrobject.h"   // _PyMethodWrapper_Type
 #include "pycore_lazyimportobject.h" // PyLazyImport_Type
 #include "pycore_namespace.h"     // _PyNamespace_Type
@@ -18,6 +19,7 @@ _types_exec(PyObject *m)
         }                                                                \
     } while (0)
 
+    EXPORT_STATIC_TYPE("AnnotateObjectType", PyAnnotate_Type);
     EXPORT_STATIC_TYPE("AsyncGeneratorType", PyAsyncGen_Type);
     EXPORT_STATIC_TYPE("BuiltinFunctionType", PyCFunction_Type);
     // BuiltinMethodType is the same as BuiltinFunctionType
