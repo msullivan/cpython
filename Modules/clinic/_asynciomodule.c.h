@@ -897,6 +897,21 @@ _asyncio_Task__must_cancel_get(PyObject *self, void *Py_UNUSED(context))
 }
 
 static PyObject *
+_asyncio_Task__cancel_protected_get_impl(TaskObj *self);
+
+static PyObject *
+_asyncio_Task__cancel_protected_get(PyObject *self, void *Py_UNUSED(context))
+{
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _asyncio_Task__cancel_protected_get_impl((TaskObj *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
+}
+
+static PyObject *
 _asyncio_Task__coro_get_impl(TaskObj *self);
 
 static PyObject *
@@ -1088,6 +1103,54 @@ _asyncio_Task_uncancel(PyObject *self, PyObject *Py_UNUSED(ignored))
 
     Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _asyncio_Task_uncancel_impl((TaskObj *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
+}
+
+PyDoc_STRVAR(_asyncio_Task_block_cancel__doc__,
+"block_cancel($self, /)\n"
+"--\n"
+"\n"
+"Block cancellation of the task until unblock_cancel() is called.");
+
+#define _ASYNCIO_TASK_BLOCK_CANCEL_METHODDEF    \
+    {"block_cancel", (PyCFunction)_asyncio_Task_block_cancel, METH_NOARGS, _asyncio_Task_block_cancel__doc__},
+
+static PyObject *
+_asyncio_Task_block_cancel_impl(TaskObj *self);
+
+static PyObject *
+_asyncio_Task_block_cancel(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _asyncio_Task_block_cancel_impl((TaskObj *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
+}
+
+PyDoc_STRVAR(_asyncio_Task_unblock_cancel__doc__,
+"unblock_cancel($self, /)\n"
+"--\n"
+"\n"
+"Undo one previous call to block_cancel().");
+
+#define _ASYNCIO_TASK_UNBLOCK_CANCEL_METHODDEF    \
+    {"unblock_cancel", (PyCFunction)_asyncio_Task_unblock_cancel, METH_NOARGS, _asyncio_Task_unblock_cancel__doc__},
+
+static PyObject *
+_asyncio_Task_unblock_cancel_impl(TaskObj *self);
+
+static PyObject *
+_asyncio_Task_unblock_cancel(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _asyncio_Task_unblock_cancel_impl((TaskObj *)self);
     Py_END_CRITICAL_SECTION();
 
     return return_value;
@@ -2100,8 +2163,10 @@ exit:
 
 #define _ASYNCIO_TASK__MUST_CANCEL_GETSETDEF {"_must_cancel", (getter)_asyncio_Task__must_cancel_get, (setter)NULL, NULL},
 
+#define _ASYNCIO_TASK__CANCEL_PROTECTED_GETSETDEF {"_cancel_protected", (getter)_asyncio_Task__cancel_protected_get, (setter)NULL, NULL},
+
 #define _ASYNCIO_TASK__CORO_GETSETDEF {"_coro", (getter)_asyncio_Task__coro_get, (setter)NULL, NULL},
 
 #define _ASYNCIO_TASK__FUT_WAITER_GETSETDEF {"_fut_waiter", (getter)_asyncio_Task__fut_waiter_get, (setter)NULL, NULL},
 
-/*[clinic end generated code: output=419f6d2b73047616 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=c07fb2df9a67550e input=a9049054013a1b77]*/

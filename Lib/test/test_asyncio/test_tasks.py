@@ -97,6 +97,10 @@ class BaseTaskTests:
 
     def setUp(self):
         super().setUp()
+        self.enterContext(
+            mock.patch.object(asyncio, 'current_task', self.current_task))
+        self.enterContext(
+            mock.patch.object(tasks, 'current_task', self.current_task))
         self.loop = self.new_test_loop()
         self.loop.set_task_factory(self.new_task)
         self.loop.create_future = lambda: self.new_future(self.loop)
@@ -708,6 +712,68 @@ class BaseTaskTests:
         finally:
             res = loop.run_until_complete(task)
             self.assertEqual(res, 42)
+            loop.close()
+
+    def test_block_cancels(self):
+        loop = asyncio.new_event_loop()
+        fut = loop.create_future()
+        out = []
+
+        async def coro():
+            task = self.current_task()
+            with asyncio.block_cancels():
+                self.assertEqual(task._cancel_protected, 1)
+                await fut
+                out.append('fut done')
+                await asyncio.sleep(0)
+                with asyncio.block_cancels():
+                    self.assertEqual(task._cancel_protected, 2)
+                    await asyncio.sleep(0)
+                self.assertEqual(task._cancel_protected, 1)
+                await asyncio.sleep(0.001)
+            self.assertEqual(task._cancel_protected, 0)
+            out.append('survived')
+            await asyncio.sleep(0)
+            out.append('not reached')
+
+        try:
+            t = self.new_task(loop, coro())
+            test_utils.run_briefly(loop)
+            self.assertFalse(t.done())
+
+            self.assertTrue(t.cancel())
+            self.assertEqual(t.cancelling(), 1)
+            self.assertTrue(t._must_cancel)
+            for _ in range(10):
+                test_utils.run_briefly(loop)
+            # The future the task is blocked on is not cancelled.
+            self.assertFalse(fut.cancelled())
+            self.assertFalse(t.done())
+
+            fut.set_result(None)
+            with self.assertRaises(asyncio.CancelledError):
+                loop.run_until_complete(t)
+            self.assertTrue(t.cancelled())
+            self.assertEqual(out, ['fut done', 'survived'])
+        finally:
+            loop.close()
+
+    def test_unblock_cancel_at_zero(self):
+        loop = asyncio.new_event_loop()
+
+        async def coro():
+            task = self.current_task()
+            self.assertEqual(task._cancel_protected, 0)
+            task.unblock_cancel()
+            self.assertEqual(task._cancel_protected, 0)
+            task.block_cancel()
+            self.assertEqual(task._cancel_protected, 1)
+            task.unblock_cancel()
+            self.assertEqual(task._cancel_protected, 0)
+
+        try:
+            loop.run_until_complete(self.new_task(loop, coro()))
+        finally:
             loop.close()
 
     def test_cancel(self):

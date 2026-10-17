@@ -62,6 +62,7 @@ typedef struct TaskObj {
     unsigned task_must_cancel: 1;
     unsigned task_log_destroy_pending: 1;
     int task_num_cancels_requested;
+    int task_cancel_protected;
     PyObject *task_fut_waiter;
     PyObject *task_coro;
     PyObject *task_name;
@@ -2312,6 +2313,7 @@ _asyncio_Task___init___impl(TaskObj *self, PyObject *coro, PyObject *loop,
     self->task_must_cancel = 0;
     self->task_log_destroy_pending = 1;
     self->task_num_cancels_requested = 0;
+    self->task_cancel_protected = 0;
     set_task_coro(self, coro);
 
     if (name == Py_None) {
@@ -2449,6 +2451,19 @@ _asyncio_Task__must_cancel_get_impl(TaskObj *self)
 /*[clinic input]
 @critical_section
 @getter
+_asyncio.Task._cancel_protected
+[clinic start generated code]*/
+
+static PyObject *
+_asyncio_Task__cancel_protected_get_impl(TaskObj *self)
+/*[clinic end generated code: output=b2a0b5d22a64ff16 input=d5135d141cc0ccc1]*/
+{
+    return PyLong_FromLong(self->task_cancel_protected);
+}
+
+/*[clinic input]
+@critical_section
+@getter
 _asyncio.Task._coro
 [clinic start generated code]*/
 
@@ -2555,7 +2570,7 @@ _asyncio_Task_cancel_impl(TaskObj *self, PyObject *msg)
     //     Py_RETURN_FALSE;
     // }
 
-    if (self->task_fut_waiter) {
+    if (self->task_fut_waiter && !self->task_cancel_protected) {
         PyObject *res;
         int is_true;
 
@@ -2624,6 +2639,38 @@ _asyncio_Task_uncancel_impl(TaskObj *self)
         }
     }
     return PyLong_FromLong(self->task_num_cancels_requested);
+}
+
+/*[clinic input]
+@critical_section
+_asyncio.Task.block_cancel
+
+Block cancellation of the task until unblock_cancel() is called.
+[clinic start generated code]*/
+
+static PyObject *
+_asyncio_Task_block_cancel_impl(TaskObj *self)
+/*[clinic end generated code: output=71c39a8a18316416 input=afd9c47f13d7833e]*/
+{
+    self->task_cancel_protected += 1;
+    Py_RETURN_NONE;
+}
+
+/*[clinic input]
+@critical_section
+_asyncio.Task.unblock_cancel
+
+Undo one previous call to block_cancel().
+[clinic start generated code]*/
+
+static PyObject *
+_asyncio_Task_unblock_cancel_impl(TaskObj *self)
+/*[clinic end generated code: output=847bf56085f6c75e input=b5af320a76f731bf]*/
+{
+    if (self->task_cancel_protected > 0) {
+        self->task_cancel_protected -= 1;
+    }
+    Py_RETURN_NONE;
 }
 
 /*[clinic input]
@@ -2883,6 +2930,8 @@ static PyMethodDef TaskType_methods[] = {
     _ASYNCIO_TASK_CANCEL_METHODDEF
     _ASYNCIO_TASK_CANCELLING_METHODDEF
     _ASYNCIO_TASK_UNCANCEL_METHODDEF
+    _ASYNCIO_TASK_BLOCK_CANCEL_METHODDEF
+    _ASYNCIO_TASK_UNBLOCK_CANCEL_METHODDEF
     _ASYNCIO_TASK_GET_STACK_METHODDEF
     _ASYNCIO_TASK_PRINT_STACK_METHODDEF
     _ASYNCIO_TASK__MAKE_CANCELLED_ERROR_METHODDEF
@@ -2898,6 +2947,7 @@ static PyMethodDef TaskType_methods[] = {
 static PyGetSetDef TaskType_getsetlist[] = {
     _ASYNCIO_TASK__LOG_DESTROY_PENDING_GETSETDEF
     _ASYNCIO_TASK__MUST_CANCEL_GETSETDEF
+    _ASYNCIO_TASK__CANCEL_PROTECTED_GETSETDEF
     _ASYNCIO_TASK__CORO_GETSETDEF
     _ASYNCIO_TASK__FUT_WAITER_GETSETDEF
     {NULL} /* Sentinel */
@@ -3029,7 +3079,7 @@ task_step_impl(asyncio_state *state, TaskObj *task, PyObject *exc)
         goto fail;
     }
 
-    if (task->task_must_cancel) {
+    if (task->task_must_cancel && !task->task_cancel_protected) {
         assert(exc != Py_None);
 
         /* Replace exc with a CancelledError unless it already is one, or
@@ -3081,7 +3131,7 @@ task_step_impl(asyncio_state *state, TaskObj *task, PyObject *exc)
                the underlying coroutine has resolved */
 
             PyObject *tmp;
-            if (task->task_must_cancel) {
+            if (task->task_must_cancel && !task->task_cancel_protected) {
                 // Task is cancelled right before coro stops.
                 task->task_must_cancel = 0;
                 tmp = future_cancel(state, (FutureObj*)task,
@@ -3202,7 +3252,7 @@ task_step_handle_result_impl(asyncio_state *state, TaskObj *task, PyObject *resu
         /* task._fut_waiter = result */
         task->task_fut_waiter = result;  /* no incref is necessary */
 
-        if (task->task_must_cancel) {
+        if (task->task_must_cancel && !task->task_cancel_protected) {
             PyObject *r;
             int is_true;
 
@@ -3314,7 +3364,7 @@ task_step_handle_result_impl(asyncio_state *state, TaskObj *task, PyObject *resu
         /* task._fut_waiter = result */
         task->task_fut_waiter = result;  /* no incref is necessary */
 
-        if (task->task_must_cancel) {
+        if (task->task_must_cancel && !task->task_cancel_protected) {
             PyObject *r;
             int is_true;
 

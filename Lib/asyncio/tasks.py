@@ -7,9 +7,11 @@ __all__ = (
     'gather', 'shield', 'ensure_future', 'run_coroutine_threadsafe',
     'current_task', 'all_tasks',
     'create_eager_task_factory', 'eager_task_factory',
+    'block_cancels',
     '_register_task', '_unregister_task', '_enter_task', '_leave_task',
 )
 
+import contextlib
 import concurrent.futures
 import contextvars
 import functools
@@ -98,7 +100,9 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
             self._name = str(name)
 
         self._num_cancels_requested = 0
+        # OR! Should we have three flags, and not set _must_cancel until we really can.
         self._must_cancel = False
+        self._cancel_protected = 0
         self._fut_waiter = None
         self._coro = coro
         if context is None:
@@ -220,13 +224,14 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
         # Also remember that this is duplicated in _asynciomodule.c.
         # if self._num_cancels_requested > 1:
         #     return False
-        if self._fut_waiter is not None:
+        if self._fut_waiter is not None and not self._cancel_protected:
             if self._fut_waiter.cancel(msg=msg):
                 # Leave self._fut_waiter; it may be a Task that
                 # catches and ignores the cancellation so we may have
                 # to cancel it again later.
                 return True
-        # It must be the case that self.__step is already scheduled.
+        # It must be the case that self.__step is already scheduled,
+        # or self._cancel_protected is set.
         self._must_cancel = True
         self._cancel_message = msg
         return True
@@ -253,6 +258,13 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
                 self._must_cancel = False
         return self._num_cancels_requested
 
+    def block_cancel(self):
+        self._cancel_protected += 1
+
+    def unblock_cancel(self):
+        if self._cancel_protected > 0:
+            self._cancel_protected -= 1
+
     def __eager_start(self):
         prev_task = _py_swap_current_task(self._loop, self)
         try:
@@ -276,7 +288,7 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
         if self.done():
             raise exceptions.InvalidStateError(
                 f'__step(): already done: {self!r}, {exc!r}')
-        if self._must_cancel:
+        if self._must_cancel and not self._cancel_protected:
             # gh-108549: do not swallow SystemExit and KeyboardInterrupt.
             if not isinstance(exc, (exceptions.CancelledError,
                                     SystemExit, KeyboardInterrupt)):
@@ -301,8 +313,9 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
             else:
                 result = coro.throw(exc)
         except StopIteration as exc:
-            if self._must_cancel:
+            if self._must_cancel and not self._cancel_protected:
                 # Task is cancelled right before coro stops.
+                # XXX: Man, it should not be, though.
                 self._must_cancel = False
                 super().cancel(msg=self._cancel_message)
             else:
@@ -338,7 +351,7 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
                         result.add_done_callback(
                             self.__wakeup, context=self._context)
                         self._fut_waiter = result
-                        if self._must_cancel:
+                        if self._must_cancel and not self._cancel_protected:
                             if self._fut_waiter.cancel(
                                     msg=self._cancel_message):
                                 self._must_cancel = False
@@ -1065,6 +1078,16 @@ def create_eager_task_factory(custom_task_constructor):
 
 
 eager_task_factory = create_eager_task_factory(Task)
+
+# TODO: use an explicit contextmanager object for performance, probably
+@contextlib.contextmanager
+def block_cancels():
+    task = current_task()
+    task.block_cancel()
+    try:
+        yield
+    finally:
+        task.unblock_cancel()
 
 
 # Collectively these two sets hold references to the complete set of active
