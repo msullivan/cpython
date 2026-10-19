@@ -1143,7 +1143,7 @@ _PyCompile_AnnotateNameData(compiler *c) {
         return Py_NewRef(c->u->u_metadata.u_qualname);
     } else {
         PyObject *result = PyTuple_Pack(
-            3, freevars, global_tuple, c->u->u_metadata.u_qualname);
+            5, freevars, global_tuple, private_name, mangled, c->u->u_metadata.u_qualname);
         Py_DECREF(freevars);
         Py_DECREF(global_tuple);
         Py_DECREF(mangled);
