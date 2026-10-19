@@ -1362,55 +1362,113 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
     visit_GeneratorExp = _visit_comprehension
 
 
-class _AnnotationNamespace(collections.abc.Mapping):
+class AnnotationNamespace(collections.abc.Mapping):
     """A mapping that combines globals, closure and classdict for an annotation."""
 
-    __slots__ = ("globals", "cells", "classdict", "explicit_globals", "_in_inner_scope")
+    __slots__ = ("locals", "classdict", "cells", "globals", "explicit_globals")
 
-    def __init__(self, globals=None, cells=None, classdict=None, explicit_globals=None):
+    def __init__(self, locals=None, *, classdict=None, cells=None, globals=None, explicit_globals=None):
+        self.locals = locals
+        self.classdict = classdict
+        self.cells = cells
         self.globals = globals or {}
-        self.cells = cells or {}
-        self.classdict = classdict or {}
         self.explicit_globals = explicit_globals or set()
-        self._in_inner_scope = False
 
     def __getitem__(self, key):
-        if key == _ANNOTATION_AST_SKIP_CLASS:
-            self._in_inner_scope = True
-            return self
-        if key not in self.explicit_globals and not self._in_inner_scope:
-            try:
-                return self.classdict[key]
-            except KeyError:
-                pass
-        self._in_inner_scope = False
-        try:
-            return self.cells[key].cell_contents
-        except KeyError:
-            pass
-        except ValueError:
-            raise NameError(
-                f"cannot access free variable {key!r} where it is not "
-                "associated with a value in enclosing scope",
-                name=key,
-            )
+        if key not in self.explicit_globals:
+            if self.locals is not None:
+                try:
+                    return self.locals[key]
+                except KeyError:
+                    pass
+            if self.classdict is not None:
+                try:
+                    return self.classdict[key]
+                except KeyError:
+                    pass
+            if self.cells is not None:
+                try:
+                    return self.cells[key].cell_contents
+                except KeyError:
+                    pass
+                except ValueError:
+                    raise NameError(
+                        f"cannot access free variable {key!r} where it is not "
+                        "associated with a value in enclosing scope",
+                        name=key,
+                    )
         try:
             return self.globals[key]
         except KeyError:
             pass
         try:
-            return getattr(self.globals["__builtins__"], key)
+            return getattr(self.globals.get("__builtins__", builtins), key)
         except AttributeError:
             pass
         raise KeyError(key)
 
+    def __hash__(self):
+        return hash((
+            tuple(sorted(self.locals.items())) if self.locals else None,
+            id(self.__globals__),  # dictionaries are not hashable, so hash by identity
+            self.__forward_is_class__,
+            (  # cells are not hashable as well
+                tuple(sorted([(name, id(cell)) for name, cell in self.cells.items()]))
+                if self.cells is not None else None,
+            ),
+            id(self.self.classdict),
+            tuple(sorted(self.self.explicit_globals)),
+        ))
+
+    def __eq__(self, other):
+        if isinstance(other, AnnotationNamespace):
+            own_cells, other_cells = None, None
+            if self.cells is not None:
+                own_cells = {name: id(cell) for name, cell in self.cells.items()}
+            if other.cells is not None:
+                other_cells = {name: id(cell) for name, cell in other.cells.items()}
+            return (
+                self.locals == other.locals
+                and self.classdict == other.classdict
+                and own_cells == other_cells
+                and self.globals is other.globals
+                and self.explicit_globals == other.explicit_globals
+            )
+        else:
+            return dict(self) == other
+
+    def keys(self):
+        names = set()
+        for namespace in (self.locals, self.classdict, self.cells):
+            if namespace is not None:
+                names.update(namespace.keys())
+        names -= self.explicit_globals
+        names.update(self.globals.keys())
+        return names
+
     def __iter__(self):
-        yield from self.classdict
-        yield from self.cells
-        yield from self.globals
+        return iter(self.keys())
 
     def __len__(self):
-        return len(self.classdict) + len(self.cells) + len(self.globals)
+        return len(self.keys())
+
+    def __copy__(self):
+        return type(self)(
+            locals=dict(self.locals) if self.locals is not None else None,
+            cells=dict(self.cells) if self.cells is not None else None,
+            classdict=dict(self.classdict) if self.classdict is not None else None,
+            globals=dict(self.globals),
+            explicit_globals=set(self.explicit_globals),
+        )
+
+    def as_inner_scope(self):
+        return type(self)(
+            locals=self.locals,
+            classdict=None,
+            cells=self.cells,
+            globals=self.globals,
+            self.explicit_globals=self.explicit_globals,
+        )
 
     @classmethod
     def from_annotate(cls, annotate):
@@ -1434,6 +1492,35 @@ class _AnnotationNamespace(collections.abc.Mapping):
             cells = None
             classdict = None
         return cls(globals=globals, cells=cells, classdict=classdict, explicit_globals=explicit_globals)
+
+    @classmethod
+    def from_owner(cls, owner, module_name=None):
+        classdict, cells, globals = None, None, None
+
+        if module_name is not None:
+            globals = getattr(sys.modules.get(module_name, None), "__dict__", None)
+        if globals is None:
+            if isinstance(owner, type):
+                module_name = getattr(owner, "__module__", None)
+                if module_name:
+                    module = sys.modules.get(module_name, None)
+                    if module:
+                        globals = getattr(module, "__dict__", None)
+            elif isinstance(owner, types.ModuleType):
+                globals = getattr(owner, "__dict__", None)
+            elif callable(owner):
+                globals = getattr(owner, "__globals__", None)
+        if globals is None:
+            globals = {}
+
+        if isinstance(owner, type):
+            classdict = owner.__dict__
+
+        type_params = getattr(owner, "__type_params__", None)
+        if type_params:
+            cells = {param.__name__: types.CellType(param) for param in type_params}
+
+        return cls(classdict=classdict, cells=cells, globals=globals)
 
 
 class AnnotationAST:

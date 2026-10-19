@@ -192,7 +192,7 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
         return NULL;
     }
     PyObject *namespace_class = PyImport_ImportModuleAttrString(
-        "annotationlib", "_AnnotationNamespace"
+        "annotationlib", "AnnotationNamespace"
     );
     if (!namespace_class) {
         return NULL;
