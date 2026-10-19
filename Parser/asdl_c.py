@@ -2121,7 +2121,8 @@ ann_ast_set_store_context(expr_ty expr)
             self.emit(self.type_prototype(name), 0, reflow=False)
         for name in sorted(self.optional_types):
             self.emit("static int ann_ast_%s_opt(PyObject *, Py_ssize_t *, %s *, "
-                      "PyArena *);" % (name, get_c_type(name)), 0, reflow=False)
+                      "PyArena *, PyObject *, PyObject *);" %
+                      (name, get_c_type(name)), 0, reflow=False)
         for name, nullable in sorted(self.sequences):
             self.emit(self.sequence_prototype(name, nullable), 0, reflow=False)
         for name in sorted(self.optional_types):
@@ -2133,7 +2134,8 @@ ann_ast_set_store_context(expr_ty expr)
             self.visit(value, name)
         self.emit("""
 PyObject *
-_PyAST_FromAnnotationString(PyArena *arena, PyObject *data)
+_PyAST_FromAnnotationString(PyArena *arena, PyObject *data,
+                            PyObject *private_name, PyObject *mangled_names)
 {
     if (!data || !PyUnicode_CheckExact(data)) {
         PyErr_SetString(PyExc_TypeError, "expected a string for data");
@@ -2142,7 +2144,8 @@ _PyAST_FromAnnotationString(PyArena *arena, PyObject *data)
     Py_ssize_t pos = 0;
     char *error_msg = NULL;
     expr_ty expr_ast;
-    if (ann_ast_expr(data, &pos, &expr_ast, arena) < 0) {
+    if (ann_ast_expr(data, &pos, &expr_ast, arena, private_name,
+                     mangled_names) < 0) {
         error_msg = "parsing annotation expression";
         goto parsing_err;
     }
@@ -2208,7 +2211,8 @@ parsing_err:
 
     def type_prototype(self, name):
         return ("static int ann_ast_%s(PyObject *, Py_ssize_t *, %s *, "
-                "PyArena *);") % (name, get_c_type(name))
+                "PyArena *, PyObject *, PyObject *);") % (
+                    name, get_c_type(name))
 
     def visitSum(self, sum, name):
         if is_simple(sum):
@@ -2217,7 +2221,8 @@ parsing_err:
         self.emit("static int", 0)
         self.emit("ann_ast_%s(PyObject *data, Py_ssize_t *pos, %s *out," %
                   (name, get_c_type(name)), 0)
-        self.emit("PyArena *arena)", 0)
+        self.emit("PyArena *arena, PyObject *private_name, "
+                  "PyObject *mangled_names)", 0)
         self.emit("{", 0)
         self.emit("Py_UCS1 kind = ann_ast_next(data, pos);", 1)
         self.emit("if (kind == 0xFF) {", 1)
@@ -2267,7 +2272,8 @@ parsing_err:
         self.emit("static int", 0)
         self.emit("ann_ast_%s(PyObject *data, Py_ssize_t *pos, %s *out," %
                   (name, ctype), 0)
-        self.emit("PyArena *arena)", 0)
+        self.emit("PyArena *arena, PyObject *private_name, "
+                  "PyObject *mangled_names)", 0)
         self.emit("{", 0)
         if name in self.RAW_ENUMS:
             self.emit("Py_UCS1 value = ann_ast_next(data, pos);", 1)
@@ -2289,7 +2295,8 @@ parsing_err:
         self.emit("static int", 0)
         self.emit("ann_ast_%s(PyObject *data, Py_ssize_t *pos, %s *out," %
                   (name, get_c_type(name)), 0)
-        self.emit("PyArena *arena)", 0)
+        self.emit("PyArena *arena, PyObject *private_name, "
+                  "PyObject *mangled_names)", 0)
         self.emit("{", 0)
         for field in product.fields:
             if field.name not in self.SKIPPED_FIELDS:
@@ -2316,6 +2323,9 @@ parsing_err:
         for field in cons.fields:
             if field.name not in self.SKIPPED_FIELDS:
                 self.emit_field_decode(field, depth, "goto failed;")
+        if cons.name in {"Name", "Attribute"}:
+            field_name = "id" if cons.name == "Name" else "attr"
+            self.emit_mangle_field(field_name, depth, "goto failed;")
         args = self.constructor_args(cons.fields, [])
         args.extend(self.attribute_defaults(self.types[name].attributes))
         self.emit("*out = %s(%s);" %
@@ -2325,6 +2335,31 @@ parsing_err:
         self.emit("goto failed;", depth + 1)
         self.emit("}", depth)
 
+    def emit_mangle_field(self, field_name, depth, failure):
+        self.emit("if (private_name != NULL && private_name != Py_None &&", depth)
+        self.emit("    mangled_names != NULL && mangled_names != Py_None) {",
+                  depth)
+        self.emit("int contains = PySet_Contains(mangled_names, %s);" %
+                  field_name, depth + 1)
+        self.emit("if (contains < 0) {", depth + 1)
+        self.emit(failure, depth + 2)
+        self.emit("}", depth + 1)
+        self.emit("if (contains) {", depth + 1)
+        self.emit("PyObject *mangled = _Py_Mangle(private_name, %s);" %
+                  field_name, depth + 2)
+        self.emit("if (mangled == NULL) {", depth + 2)
+        self.emit(failure, depth + 3)
+        self.emit("}", depth + 2)
+        self.emit("if (_PyArena_AddPyObject(arena, mangled) < 0) {", depth + 2)
+        self.emit("Py_DECREF(mangled);", depth + 3)
+        self.emit(failure, depth + 3)
+        self.emit("}", depth + 2)
+        self.emit("Py_DECREF(%s);" % field_name, depth + 2)
+        self.emit("Py_DECREF(mangled);", depth + 2)
+        self.emit("%s = mangled;" % field_name, depth + 2)
+        self.emit("}", depth + 1)
+        self.emit("}", depth)
+
     def sequence_prototype(self, name, nullable):
         suffix = "_opt" if nullable else ""
         if name in self.metadata.simple_sums or name == "int":
@@ -2332,14 +2367,16 @@ parsing_err:
         else:
             seq_type = "asdl_%s_seq" % name
         return ("static int ann_ast_%s_seq%s(PyObject *, Py_ssize_t *, "
-                "%s **, PyArena *);") % (name, suffix, seq_type)
+                "%s **, PyArena *, PyObject *, PyObject *);") % (
+                    name, suffix, seq_type)
 
     def emit_optional(self, name):
         ctype = get_c_type(name)
         self.emit("static int", 0)
         self.emit("ann_ast_%s_opt(PyObject *data, Py_ssize_t *pos, %s *out," %
                   (name, ctype), 0)
-        self.emit("PyArena *arena)", 0)
+        self.emit("PyArena *arena, PyObject *private_name, "
+                  "PyObject *mangled_names)", 0)
         self.emit("{", 0)
         self.emit("Py_UCS1 next = ann_ast_peek(data, pos);", 1)
         self.emit("if (next == 0xFF) {", 1)
@@ -2355,7 +2392,9 @@ parsing_err:
             self.emit("return -1;", 2)
             self.emit("}", 1)
             self.emit("(void)ann_ast_next(data, pos);", 1)
-        self.emit("return ann_ast_%s(data, pos, out, arena);" % name, 1)
+        args = ("arena" if name in self.builtin_types else
+                "arena, private_name, mangled_names")
+        self.emit("return ann_ast_%s(data, pos, out, %s);" % (name, args), 1)
         self.emit("}", 0)
         self.emit("", 0)
 
@@ -2369,10 +2408,13 @@ parsing_err:
             seq_name = name
         ctype = get_c_type(name)
         decoder = "ann_ast_%s%s" % (name, "_opt" if nullable else "")
+        decoder_args = ("arena" if name in self.builtin_types and not nullable
+                        else "arena, private_name, mangled_names")
         self.emit("static int", 0)
         self.emit("ann_ast_%s_seq%s(PyObject *data, Py_ssize_t *pos," %
                   (name, suffix), 0)
-        self.emit("%s **out, PyArena *arena)" % seq_type, 0)
+        self.emit("%s **out, PyArena *arena, PyObject *private_name, "
+                  "PyObject *mangled_names)" % seq_type, 0)
         self.emit("{", 0)
         self.emit("Py_ssize_t len;", 1)
         self.emit("if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {", 1)
@@ -2384,7 +2426,8 @@ parsing_err:
         self.emit("}", 1)
         self.emit("for (Py_ssize_t i = 0; i < len; i++) {", 1)
         self.emit("%s value;" % ctype, 2)
-        self.emit("if (%s(data, pos, &value, arena) < 0) {" % decoder, 2)
+        self.emit("if (%s(data, pos, &value, %s) < 0) {" %
+                  (decoder, decoder_args), 2)
         self.emit("return -1;", 3)
         self.emit("}", 2)
         self.emit("asdl_seq_SET(*out, i, value);", 2)
@@ -2414,6 +2457,11 @@ parsing_err:
             field.type,
             "_seq_opt" if seq_optional else "_seq" if field.seq else
             "_opt" if nullable else "")
+        decoder_args = (
+            "arena" if not (field.seq or nullable or
+                            field.type not in self.builtin_types)
+            else "arena, private_name, mangled_names"
+        )
         if nullable:
             next_name = "next_%s" % name
             self.emit("Py_UCS1 %s = ann_ast_peek(data, pos);" % next_name, depth)
@@ -2424,13 +2472,13 @@ parsing_err:
             self.emit("(void)ann_ast_next(data, pos);", depth + 1)
             self.emit("%s = NULL;" % name, depth + 1)
             self.emit("}", depth)
-            self.emit("else if (%s(data, pos, &%s, arena) < 0) {" %
-                      (decoder, name), depth)
+            self.emit("else if (%s(data, pos, &%s, %s) < 0) {" %
+                      (decoder, name, decoder_args), depth)
             self.emit(failure, depth + 1)
             self.emit("}", depth)
         else:
-            self.emit("if (%s(data, pos, &%s, arena) < 0) {" %
-                      (decoder, name), depth)
+            self.emit("if (%s(data, pos, &%s, %s) < 0) {" %
+                      (decoder, name, decoder_args), depth)
             self.emit(failure, depth + 1)
             self.emit("}", depth)
         if field.name == "target" and field.type == "expr":
@@ -2464,7 +2512,8 @@ class ASTModuleVisitor(PickleVisitor):
     def visitModule(self, mod):
         self.emit("""
 PyObject *
-_PyAST_FromAnnotationData(PyObject *data)
+_PyAST_FromAnnotationData(PyObject *data, PyObject *private_name,
+                          PyObject *mangled_names)
 {
     if (!data || !(PyAnyDict_CheckExact(data) || PyUnicode_CheckExact(data))) {
         PyErr_Format(PyExc_TypeError, "expected a dictionary or string for data, got %R", data);
@@ -2476,7 +2525,8 @@ _PyAST_FromAnnotationData(PyObject *data)
     }
 
     if (PyUnicode_CheckExact(data)) {
-        PyObject *out = _PyAST_FromAnnotationString(arena, data);
+        PyObject *out = _PyAST_FromAnnotationString(
+            arena, data, private_name, mangled_names);
         _PyArena_Free(arena);
         return out;
     }
@@ -2487,7 +2537,8 @@ _PyAST_FromAnnotationData(PyObject *data)
     PyObject *name, *data_string;
     Py_ssize_t pos = 0;
     while (PyDict_Next(data, &pos, &name, &data_string)) {
-        PyObject *expr_obj = _PyAST_FromAnnotationString(arena, data_string);
+        PyObject *expr_obj = _PyAST_FromAnnotationString(
+            arena, data_string, private_name, mangled_names);
         if (!expr_obj) {
             goto parsing_err;
         }
@@ -2509,7 +2560,7 @@ parsing_err:
 static PyObject *
 ast_from_annotation_data(PyObject *Py_UNUSED(module), PyObject *data)
 {
-    return _PyAST_FromAnnotationData(data);
+    return _PyAST_FromAnnotationData(data, NULL, NULL);
 }
 
 /* Helper for checking if a node class is abstract in the tests. */
@@ -2884,6 +2935,7 @@ def generate_module_def(mod, metadata, f, internal_h):
         #include "pycore_pystate.h"       // _PyInterpreterState_GET()
         #include "pycore_runtime.h"       // _Py_ID()
         #include "pycore_setobject.h"     // _PySet_NextEntry()
+        #include "pycore_symtable.h"      // _Py_Mangle()
         #include "pycore_unionobject.h"   // _Py_union_type_or
 
         #include <stddef.h>               // offsetof()
@@ -2959,8 +3011,10 @@ def write_header(mod, metadata, f):
         /* _PyAST_GetAnnotationAST is defined in ast_annotations.c */
         extern PyObject* _PyAST_GetAnnotationAST(expr_ty, int);
 
-        extern PyObject* _PyAST_FromAnnotationString(PyArena *, PyObject *);
-        extern PyObject* _PyAST_FromAnnotationData(PyObject *);
+        extern PyObject* _PyAST_FromAnnotationString(
+            PyArena *, PyObject *, PyObject *, PyObject *);
+        extern PyObject* _PyAST_FromAnnotationData(
+            PyObject *, PyObject *, PyObject *);
 
         /* Return the borrowed reference to the first literal string in the
            sequence of statements or NULL if it doesn't start from a literal string.

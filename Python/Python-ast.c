@@ -9,6 +9,7 @@
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_runtime.h"       // _Py_ID()
 #include "pycore_setobject.h"     // _PySet_NextEntry()
+#include "pycore_symtable.h"      // _Py_Mangle()
 #include "pycore_unionobject.h"   // _Py_union_type_or
 
 #include <stddef.h>               // offsetof()
@@ -18296,28 +18297,28 @@ static int ann_ast_constant(PyObject *, Py_ssize_t *, constant *, PyArena *);
 static int ann_ast_identifier(PyObject *, Py_ssize_t *, identifier *, PyArena *);
 static int ann_ast_int(PyObject *, Py_ssize_t *, int *, PyArena *);
 static int ann_ast_string(PyObject *, Py_ssize_t *, string *, PyArena *);
-static int ann_ast_arg(PyObject *, Py_ssize_t *, arg_ty *, PyArena *);
-static int ann_ast_arguments(PyObject *, Py_ssize_t *, arguments_ty *, PyArena *);
-static int ann_ast_boolop(PyObject *, Py_ssize_t *, boolop_ty *, PyArena *);
-static int ann_ast_cmpop(PyObject *, Py_ssize_t *, cmpop_ty *, PyArena *);
-static int ann_ast_comprehension(PyObject *, Py_ssize_t *, comprehension_ty *, PyArena *);
-static int ann_ast_expr(PyObject *, Py_ssize_t *, expr_ty *, PyArena *);
-static int ann_ast_keyword(PyObject *, Py_ssize_t *, keyword_ty *, PyArena *);
-static int ann_ast_operator(PyObject *, Py_ssize_t *, operator_ty *, PyArena *);
-static int ann_ast_unaryop(PyObject *, Py_ssize_t *, unaryop_ty *, PyArena *);
-static int ann_ast_arg_opt(PyObject *, Py_ssize_t *, arg_ty *, PyArena *);
-static int ann_ast_expr_opt(PyObject *, Py_ssize_t *, expr_ty *, PyArena *);
-static int ann_ast_identifier_opt(PyObject *, Py_ssize_t *, identifier *, PyArena *);
-static int ann_ast_string_opt(PyObject *, Py_ssize_t *, string *, PyArena *);
-static int ann_ast_arg_seq(PyObject *, Py_ssize_t *, asdl_arg_seq **, PyArena *);
-static int ann_ast_cmpop_seq(PyObject *, Py_ssize_t *, asdl_int_seq **, PyArena *);
-static int ann_ast_comprehension_seq(PyObject *, Py_ssize_t *, asdl_comprehension_seq **, PyArena *);
-static int ann_ast_expr_seq(PyObject *, Py_ssize_t *, asdl_expr_seq **, PyArena *);
-static int ann_ast_expr_seq_opt(PyObject *, Py_ssize_t *, asdl_expr_seq **, PyArena *);
-static int ann_ast_keyword_seq(PyObject *, Py_ssize_t *, asdl_keyword_seq **, PyArena *);
+static int ann_ast_arg(PyObject *, Py_ssize_t *, arg_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_arguments(PyObject *, Py_ssize_t *, arguments_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_boolop(PyObject *, Py_ssize_t *, boolop_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_cmpop(PyObject *, Py_ssize_t *, cmpop_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_comprehension(PyObject *, Py_ssize_t *, comprehension_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_expr(PyObject *, Py_ssize_t *, expr_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_keyword(PyObject *, Py_ssize_t *, keyword_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_operator(PyObject *, Py_ssize_t *, operator_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_unaryop(PyObject *, Py_ssize_t *, unaryop_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_arg_opt(PyObject *, Py_ssize_t *, arg_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_expr_opt(PyObject *, Py_ssize_t *, expr_ty *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_identifier_opt(PyObject *, Py_ssize_t *, identifier *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_string_opt(PyObject *, Py_ssize_t *, string *, PyArena *, PyObject *, PyObject *);
+static int ann_ast_arg_seq(PyObject *, Py_ssize_t *, asdl_arg_seq **, PyArena *, PyObject *, PyObject *);
+static int ann_ast_cmpop_seq(PyObject *, Py_ssize_t *, asdl_int_seq **, PyArena *, PyObject *, PyObject *);
+static int ann_ast_comprehension_seq(PyObject *, Py_ssize_t *, asdl_comprehension_seq **, PyArena *, PyObject *, PyObject *);
+static int ann_ast_expr_seq(PyObject *, Py_ssize_t *, asdl_expr_seq **, PyArena *, PyObject *, PyObject *);
+static int ann_ast_expr_seq_opt(PyObject *, Py_ssize_t *, asdl_expr_seq **, PyArena *, PyObject *, PyObject *);
+static int ann_ast_keyword_seq(PyObject *, Py_ssize_t *, asdl_keyword_seq **, PyArena *, PyObject *, PyObject *);
 static int
 ann_ast_arg_opt(PyObject *data, Py_ssize_t *pos, arg_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 next = ann_ast_peek(data, pos);
     if (next == 0xFF) {
@@ -18328,12 +18329,12 @@ PyArena *arena)
         *out = NULL;
         return 0;
     }
-    return ann_ast_arg(data, pos, out, arena);
+    return ann_ast_arg(data, pos, out, arena, private_name, mangled_names);
 }
 
 static int
 ann_ast_expr_opt(PyObject *data, Py_ssize_t *pos, expr_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 next = ann_ast_peek(data, pos);
     if (next == 0xFF) {
@@ -18344,12 +18345,12 @@ PyArena *arena)
         *out = NULL;
         return 0;
     }
-    return ann_ast_expr(data, pos, out, arena);
+    return ann_ast_expr(data, pos, out, arena, private_name, mangled_names);
 }
 
 static int
 ann_ast_identifier_opt(PyObject *data, Py_ssize_t *pos, identifier *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 next = ann_ast_peek(data, pos);
     if (next == 0xFF) {
@@ -18369,7 +18370,7 @@ PyArena *arena)
 
 static int
 ann_ast_string_opt(PyObject *data, Py_ssize_t *pos, string *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 next = ann_ast_peek(data, pos);
     if (next == 0xFF) {
@@ -18389,7 +18390,8 @@ PyArena *arena)
 
 static int
 ann_ast_arg_seq(PyObject *data, Py_ssize_t *pos,
-asdl_arg_seq **out, PyArena *arena)
+asdl_arg_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18401,7 +18403,8 @@ asdl_arg_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         arg_ty value;
-        if (ann_ast_arg(data, pos, &value, arena) < 0) {
+        if (ann_ast_arg(data, pos, &value, arena, private_name, mangled_names)
+            < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18411,7 +18414,8 @@ asdl_arg_seq **out, PyArena *arena)
 
 static int
 ann_ast_cmpop_seq(PyObject *data, Py_ssize_t *pos,
-asdl_int_seq **out, PyArena *arena)
+asdl_int_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18423,7 +18427,8 @@ asdl_int_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         cmpop_ty value;
-        if (ann_ast_cmpop(data, pos, &value, arena) < 0) {
+        if (ann_ast_cmpop(data, pos, &value, arena, private_name,
+            mangled_names) < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18433,7 +18438,8 @@ asdl_int_seq **out, PyArena *arena)
 
 static int
 ann_ast_comprehension_seq(PyObject *data, Py_ssize_t *pos,
-asdl_comprehension_seq **out, PyArena *arena)
+asdl_comprehension_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18445,7 +18451,8 @@ asdl_comprehension_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         comprehension_ty value;
-        if (ann_ast_comprehension(data, pos, &value, arena) < 0) {
+        if (ann_ast_comprehension(data, pos, &value, arena, private_name,
+            mangled_names) < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18455,7 +18462,8 @@ asdl_comprehension_seq **out, PyArena *arena)
 
 static int
 ann_ast_expr_seq(PyObject *data, Py_ssize_t *pos,
-asdl_expr_seq **out, PyArena *arena)
+asdl_expr_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18467,7 +18475,8 @@ asdl_expr_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         expr_ty value;
-        if (ann_ast_expr(data, pos, &value, arena) < 0) {
+        if (ann_ast_expr(data, pos, &value, arena, private_name, mangled_names)
+            < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18477,7 +18486,8 @@ asdl_expr_seq **out, PyArena *arena)
 
 static int
 ann_ast_expr_seq_opt(PyObject *data, Py_ssize_t *pos,
-asdl_expr_seq **out, PyArena *arena)
+asdl_expr_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18489,7 +18499,8 @@ asdl_expr_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         expr_ty value;
-        if (ann_ast_expr_opt(data, pos, &value, arena) < 0) {
+        if (ann_ast_expr_opt(data, pos, &value, arena, private_name,
+            mangled_names) < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18499,7 +18510,8 @@ asdl_expr_seq **out, PyArena *arena)
 
 static int
 ann_ast_keyword_seq(PyObject *data, Py_ssize_t *pos,
-asdl_keyword_seq **out, PyArena *arena)
+asdl_keyword_seq **out, PyArena *arena, PyObject *private_name, PyObject
+*mangled_names)
 {
     Py_ssize_t len;
     if (ann_ast_size_t(data, pos, &len) < 0 || len < 0) {
@@ -18511,7 +18523,8 @@ asdl_keyword_seq **out, PyArena *arena)
     }
     for (Py_ssize_t i = 0; i < len; i++) {
         keyword_ty value;
-        if (ann_ast_keyword(data, pos, &value, arena) < 0) {
+        if (ann_ast_keyword(data, pos, &value, arena, private_name,
+            mangled_names) < 0) {
             return -1;
         }
         asdl_seq_SET(*out, i, value);
@@ -18521,7 +18534,7 @@ asdl_keyword_seq **out, PyArena *arena)
 
 static int
 ann_ast_arg(PyObject *data, Py_ssize_t *pos, arg_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     identifier arg;
     expr_ty annotation;
@@ -18537,7 +18550,8 @@ PyArena *arena)
         (void)ann_ast_next(data, pos);
         annotation = NULL;
     }
-    else if (ann_ast_expr_opt(data, pos, &annotation, arena) < 0) {
+    else if (ann_ast_expr_opt(data, pos, &annotation, arena, private_name,
+             mangled_names) < 0) {
         return -1;
     }
     Py_UCS1 next_type_comment = ann_ast_peek(data, pos);
@@ -18548,7 +18562,8 @@ PyArena *arena)
         (void)ann_ast_next(data, pos);
         type_comment = NULL;
     }
-    else if (ann_ast_string_opt(data, pos, &type_comment, arena) < 0) {
+    else if (ann_ast_string_opt(data, pos, &type_comment, arena, private_name,
+             mangled_names) < 0) {
         return -1;
     }
     *out = _PyAST_arg(arg, annotation, type_comment, 1, 0, 1, 0, arena);
@@ -18560,7 +18575,7 @@ PyArena *arena)
 
 static int
 ann_ast_arguments(PyObject *data, Py_ssize_t *pos, arguments_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     asdl_arg_seq * posonlyargs;
     asdl_arg_seq * args;
@@ -18569,10 +18584,12 @@ PyArena *arena)
     asdl_expr_seq * kw_defaults;
     arg_ty kwarg;
     asdl_expr_seq * defaults;
-    if (ann_ast_arg_seq(data, pos, &posonlyargs, arena) < 0) {
+    if (ann_ast_arg_seq(data, pos, &posonlyargs, arena, private_name,
+        mangled_names) < 0) {
         return -1;
     }
-    if (ann_ast_arg_seq(data, pos, &args, arena) < 0) {
+    if (ann_ast_arg_seq(data, pos, &args, arena, private_name, mangled_names) <
+        0) {
         return -1;
     }
     Py_UCS1 next_vararg = ann_ast_peek(data, pos);
@@ -18583,13 +18600,16 @@ PyArena *arena)
         (void)ann_ast_next(data, pos);
         vararg = NULL;
     }
-    else if (ann_ast_arg_opt(data, pos, &vararg, arena) < 0) {
+    else if (ann_ast_arg_opt(data, pos, &vararg, arena, private_name,
+             mangled_names) < 0) {
         return -1;
     }
-    if (ann_ast_arg_seq(data, pos, &kwonlyargs, arena) < 0) {
+    if (ann_ast_arg_seq(data, pos, &kwonlyargs, arena, private_name,
+        mangled_names) < 0) {
         return -1;
     }
-    if (ann_ast_expr_seq_opt(data, pos, &kw_defaults, arena) < 0) {
+    if (ann_ast_expr_seq_opt(data, pos, &kw_defaults, arena, private_name,
+        mangled_names) < 0) {
         return -1;
     }
     Py_UCS1 next_kwarg = ann_ast_peek(data, pos);
@@ -18600,10 +18620,12 @@ PyArena *arena)
         (void)ann_ast_next(data, pos);
         kwarg = NULL;
     }
-    else if (ann_ast_arg_opt(data, pos, &kwarg, arena) < 0) {
+    else if (ann_ast_arg_opt(data, pos, &kwarg, arena, private_name,
+             mangled_names) < 0) {
         return -1;
     }
-    if (ann_ast_expr_seq(data, pos, &defaults, arena) < 0) {
+    if (ann_ast_expr_seq(data, pos, &defaults, arena, private_name,
+        mangled_names) < 0) {
         return -1;
     }
     *out = _PyAST_arguments(posonlyargs, args, vararg, kwonlyargs, kw_defaults,
@@ -18616,7 +18638,7 @@ PyArena *arena)
 
 static int
 ann_ast_boolop(PyObject *data, Py_ssize_t *pos, boolop_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 value = ann_ast_next(data, pos);
     if (value == 0xFF) {
@@ -18628,7 +18650,7 @@ PyArena *arena)
 
 static int
 ann_ast_cmpop(PyObject *data, Py_ssize_t *pos, cmpop_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_ssize_t value;
     if (ann_ast_size_t(data, pos, &value) < 0) {
@@ -18640,20 +18662,23 @@ PyArena *arena)
 
 static int
 ann_ast_comprehension(PyObject *data, Py_ssize_t *pos, comprehension_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     expr_ty target;
     expr_ty iter;
     asdl_expr_seq * ifs;
     int is_async;
-    if (ann_ast_expr(data, pos, &target, arena) < 0) {
+    if (ann_ast_expr(data, pos, &target, arena, private_name, mangled_names) <
+        0) {
         return -1;
     }
     ann_ast_set_store_context(target);
-    if (ann_ast_expr(data, pos, &iter, arena) < 0) {
+    if (ann_ast_expr(data, pos, &iter, arena, private_name, mangled_names) < 0)
+        {
         return -1;
     }
-    if (ann_ast_expr_seq(data, pos, &ifs, arena) < 0) {
+    if (ann_ast_expr_seq(data, pos, &ifs, arena, private_name, mangled_names) <
+        0) {
         return -1;
     }
     if (ann_ast_int(data, pos, &is_async, arena) < 0) {
@@ -18668,7 +18693,7 @@ PyArena *arena)
 
 static int
 ann_ast_expr(PyObject *data, Py_ssize_t *pos, expr_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 kind = ann_ast_next(data, pos);
     if (kind == 0xFF) {
@@ -18685,10 +18710,12 @@ PyArena *arena)
         case BoolOp_kind: {
             boolop_ty op;
             asdl_expr_seq * values;
-            if (ann_ast_boolop(data, pos, &op, arena) < 0) {
+            if (ann_ast_boolop(data, pos, &op, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr_seq(data, pos, &values, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &values, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_BoolOp(op, values, 1, 0, 1, 0, arena);
@@ -18700,11 +18727,13 @@ PyArena *arena)
         case NamedExpr_kind: {
             expr_ty target;
             expr_ty value;
-            if (ann_ast_expr(data, pos, &target, arena) < 0) {
+            if (ann_ast_expr(data, pos, &target, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             ann_ast_set_store_context(target);
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_NamedExpr(target, value, 1, 0, 1, 0, arena);
@@ -18717,13 +18746,16 @@ PyArena *arena)
             expr_ty left;
             operator_ty op;
             expr_ty right;
-            if (ann_ast_expr(data, pos, &left, arena) < 0) {
+            if (ann_ast_expr(data, pos, &left, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_operator(data, pos, &op, arena) < 0) {
+            if (ann_ast_operator(data, pos, &op, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &right, arena) < 0) {
+            if (ann_ast_expr(data, pos, &right, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_BinOp(left, op, right, 1, 0, 1, 0, arena);
@@ -18735,10 +18767,12 @@ PyArena *arena)
         case UnaryOp_kind: {
             unaryop_ty op;
             expr_ty operand;
-            if (ann_ast_unaryop(data, pos, &op, arena) < 0) {
+            if (ann_ast_unaryop(data, pos, &op, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &operand, arena) < 0) {
+            if (ann_ast_expr(data, pos, &operand, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_UnaryOp(op, operand, 1, 0, 1, 0, arena);
@@ -18750,10 +18784,12 @@ PyArena *arena)
         case Lambda_kind: {
             arguments_ty args;
             expr_ty body;
-            if (ann_ast_arguments(data, pos, &args, arena) < 0) {
+            if (ann_ast_arguments(data, pos, &args, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &body, arena) < 0) {
+            if (ann_ast_expr(data, pos, &body, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Lambda(args, body, 1, 0, 1, 0, arena);
@@ -18766,13 +18802,16 @@ PyArena *arena)
             expr_ty test;
             expr_ty body;
             expr_ty orelse;
-            if (ann_ast_expr(data, pos, &test, arena) < 0) {
+            if (ann_ast_expr(data, pos, &test, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &body, arena) < 0) {
+            if (ann_ast_expr(data, pos, &body, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &orelse, arena) < 0) {
+            if (ann_ast_expr(data, pos, &orelse, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_IfExp(test, body, orelse, 1, 0, 1, 0, arena);
@@ -18784,10 +18823,12 @@ PyArena *arena)
         case Dict_kind: {
             asdl_expr_seq * keys;
             asdl_expr_seq * values;
-            if (ann_ast_expr_seq_opt(data, pos, &keys, arena) < 0) {
+            if (ann_ast_expr_seq_opt(data, pos, &keys, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr_seq(data, pos, &values, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &values, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Dict(keys, values, 1, 0, 1, 0, arena);
@@ -18798,7 +18839,8 @@ PyArena *arena)
         }
         case Set_kind: {
             asdl_expr_seq * elts;
-            if (ann_ast_expr_seq(data, pos, &elts, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &elts, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Set(elts, 1, 0, 1, 0, arena);
@@ -18810,10 +18852,12 @@ PyArena *arena)
         case ListComp_kind: {
             expr_ty elt;
             asdl_comprehension_seq * generators;
-            if (ann_ast_expr(data, pos, &elt, arena) < 0) {
+            if (ann_ast_expr(data, pos, &elt, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_comprehension_seq(data, pos, &generators, arena) < 0) {
+            if (ann_ast_comprehension_seq(data, pos, &generators, arena,
+                private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_ListComp(elt, generators, 1, 0, 1, 0, arena);
@@ -18825,10 +18869,12 @@ PyArena *arena)
         case SetComp_kind: {
             expr_ty elt;
             asdl_comprehension_seq * generators;
-            if (ann_ast_expr(data, pos, &elt, arena) < 0) {
+            if (ann_ast_expr(data, pos, &elt, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_comprehension_seq(data, pos, &generators, arena) < 0) {
+            if (ann_ast_comprehension_seq(data, pos, &generators, arena,
+                private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_SetComp(elt, generators, 1, 0, 1, 0, arena);
@@ -18841,7 +18887,8 @@ PyArena *arena)
             expr_ty key;
             expr_ty value;
             asdl_comprehension_seq * generators;
-            if (ann_ast_expr(data, pos, &key, arena) < 0) {
+            if (ann_ast_expr(data, pos, &key, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             Py_UCS1 next_value = ann_ast_peek(data, pos);
@@ -18852,10 +18899,12 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 value = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &value, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &value, arena, private_name,
+                     mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_comprehension_seq(data, pos, &generators, arena) < 0) {
+            if (ann_ast_comprehension_seq(data, pos, &generators, arena,
+                private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_DictComp(key, value, generators, 1, 0, 1, 0, arena);
@@ -18867,10 +18916,12 @@ PyArena *arena)
         case GeneratorExp_kind: {
             expr_ty elt;
             asdl_comprehension_seq * generators;
-            if (ann_ast_expr(data, pos, &elt, arena) < 0) {
+            if (ann_ast_expr(data, pos, &elt, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_comprehension_seq(data, pos, &generators, arena) < 0) {
+            if (ann_ast_comprehension_seq(data, pos, &generators, arena,
+                private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_GeneratorExp(elt, generators, 1, 0, 1, 0, arena);
@@ -18881,7 +18932,8 @@ PyArena *arena)
         }
         case Await_kind: {
             expr_ty value;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Await(value, 1, 0, 1, 0, arena);
@@ -18900,7 +18952,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 value = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &value, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &value, arena, private_name,
+                     mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Yield(value, 1, 0, 1, 0, arena);
@@ -18911,7 +18964,8 @@ PyArena *arena)
         }
         case YieldFrom_kind: {
             expr_ty value;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_YieldFrom(value, 1, 0, 1, 0, arena);
@@ -18924,13 +18978,16 @@ PyArena *arena)
             expr_ty left;
             asdl_int_seq * ops;
             asdl_expr_seq * comparators;
-            if (ann_ast_expr(data, pos, &left, arena) < 0) {
+            if (ann_ast_expr(data, pos, &left, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_cmpop_seq(data, pos, &ops, arena) < 0) {
+            if (ann_ast_cmpop_seq(data, pos, &ops, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr_seq(data, pos, &comparators, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &comparators, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Compare(left, ops, comparators, 1, 0, 1, 0, arena);
@@ -18943,13 +19000,16 @@ PyArena *arena)
             expr_ty func;
             asdl_expr_seq * args;
             asdl_keyword_seq * keywords;
-            if (ann_ast_expr(data, pos, &func, arena) < 0) {
+            if (ann_ast_expr(data, pos, &func, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr_seq(data, pos, &args, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &args, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_keyword_seq(data, pos, &keywords, arena) < 0) {
+            if (ann_ast_keyword_seq(data, pos, &keywords, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Call(func, args, keywords, 1, 0, 1, 0, arena);
@@ -18962,7 +19022,8 @@ PyArena *arena)
             expr_ty value;
             int conversion;
             expr_ty format_spec;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             if (ann_ast_int(data, pos, &conversion, arena) < 0) {
@@ -18976,7 +19037,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 format_spec = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &format_spec, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &format_spec, arena,
+                     private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_FormattedValue(value, conversion, format_spec, 1, 0,
@@ -18991,7 +19053,8 @@ PyArena *arena)
             constant str;
             int conversion;
             expr_ty format_spec;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             if (ann_ast_constant(data, pos, &str, arena) < 0) {
@@ -19008,7 +19071,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 format_spec = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &format_spec, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &format_spec, arena,
+                     private_name, mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Interpolation(value, str, conversion, format_spec, 1,
@@ -19020,7 +19084,8 @@ PyArena *arena)
         }
         case JoinedStr_kind: {
             asdl_expr_seq * values;
-            if (ann_ast_expr_seq(data, pos, &values, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &values, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_JoinedStr(values, 1, 0, 1, 0, arena);
@@ -19031,7 +19096,8 @@ PyArena *arena)
         }
         case TemplateStr_kind: {
             asdl_expr_seq * values;
-            if (ann_ast_expr_seq(data, pos, &values, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &values, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_TemplateStr(values, 1, 0, 1, 0, arena);
@@ -19043,11 +19109,32 @@ PyArena *arena)
         case Attribute_kind: {
             expr_ty value;
             identifier attr;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             if (ann_ast_identifier(data, pos, &attr, arena) < 0) {
                 goto failed;
+            }
+            if (private_name != NULL && private_name != Py_None &&
+                mangled_names != NULL && mangled_names != Py_None) {
+                int contains = PySet_Contains(mangled_names, attr);
+                if (contains < 0) {
+                    goto failed;
+                }
+                if (contains) {
+                    PyObject *mangled = _Py_Mangle(private_name, attr);
+                    if (mangled == NULL) {
+                        goto failed;
+                    }
+                    if (_PyArena_AddPyObject(arena, mangled) < 0) {
+                        Py_DECREF(mangled);
+                        goto failed;
+                    }
+                    Py_DECREF(attr);
+                    Py_DECREF(mangled);
+                    attr = mangled;
+                }
             }
             *out = _PyAST_Attribute(value, attr, Load, 1, 0, 1, 0, arena);
             if (*out == NULL) {
@@ -19058,10 +19145,12 @@ PyArena *arena)
         case Subscript_kind: {
             expr_ty value;
             expr_ty slice;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
-            if (ann_ast_expr(data, pos, &slice, arena) < 0) {
+            if (ann_ast_expr(data, pos, &slice, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Subscript(value, slice, Load, 1, 0, 1, 0, arena);
@@ -19072,7 +19161,8 @@ PyArena *arena)
         }
         case Starred_kind: {
             expr_ty value;
-            if (ann_ast_expr(data, pos, &value, arena) < 0) {
+            if (ann_ast_expr(data, pos, &value, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Starred(value, Load, 1, 0, 1, 0, arena);
@@ -19086,6 +19176,26 @@ PyArena *arena)
             if (ann_ast_identifier(data, pos, &id, arena) < 0) {
                 goto failed;
             }
+            if (private_name != NULL && private_name != Py_None &&
+                mangled_names != NULL && mangled_names != Py_None) {
+                int contains = PySet_Contains(mangled_names, id);
+                if (contains < 0) {
+                    goto failed;
+                }
+                if (contains) {
+                    PyObject *mangled = _Py_Mangle(private_name, id);
+                    if (mangled == NULL) {
+                        goto failed;
+                    }
+                    if (_PyArena_AddPyObject(arena, mangled) < 0) {
+                        Py_DECREF(mangled);
+                        goto failed;
+                    }
+                    Py_DECREF(id);
+                    Py_DECREF(mangled);
+                    id = mangled;
+                }
+            }
             *out = _PyAST_Name(id, Load, 1, 0, 1, 0, arena);
             if (*out == NULL) {
                 goto failed;
@@ -19094,7 +19204,8 @@ PyArena *arena)
         }
         case List_kind: {
             asdl_expr_seq * elts;
-            if (ann_ast_expr_seq(data, pos, &elts, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &elts, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_List(elts, Load, 1, 0, 1, 0, arena);
@@ -19105,7 +19216,8 @@ PyArena *arena)
         }
         case Tuple_kind: {
             asdl_expr_seq * elts;
-            if (ann_ast_expr_seq(data, pos, &elts, arena) < 0) {
+            if (ann_ast_expr_seq(data, pos, &elts, arena, private_name,
+                mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Tuple(elts, Load, 1, 0, 1, 0, arena);
@@ -19126,7 +19238,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 lower = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &lower, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &lower, arena, private_name,
+                     mangled_names) < 0) {
                 goto failed;
             }
             Py_UCS1 next_upper = ann_ast_peek(data, pos);
@@ -19137,7 +19250,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 upper = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &upper, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &upper, arena, private_name,
+                     mangled_names) < 0) {
                 goto failed;
             }
             Py_UCS1 next_step = ann_ast_peek(data, pos);
@@ -19148,7 +19262,8 @@ PyArena *arena)
                 (void)ann_ast_next(data, pos);
                 step = NULL;
             }
-            else if (ann_ast_expr_opt(data, pos, &step, arena) < 0) {
+            else if (ann_ast_expr_opt(data, pos, &step, arena, private_name,
+                     mangled_names) < 0) {
                 goto failed;
             }
             *out = _PyAST_Slice(lower, upper, step, 1, 0, 1, 0, arena);
@@ -19279,7 +19394,7 @@ PyArena *arena)
 
 static int
 ann_ast_keyword(PyObject *data, Py_ssize_t *pos, keyword_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     identifier arg;
     expr_ty value;
@@ -19291,10 +19406,12 @@ PyArena *arena)
         (void)ann_ast_next(data, pos);
         arg = NULL;
     }
-    else if (ann_ast_identifier_opt(data, pos, &arg, arena) < 0) {
+    else if (ann_ast_identifier_opt(data, pos, &arg, arena, private_name,
+             mangled_names) < 0) {
         return -1;
     }
-    if (ann_ast_expr(data, pos, &value, arena) < 0) {
+    if (ann_ast_expr(data, pos, &value, arena, private_name, mangled_names) <
+        0) {
         return -1;
     }
     *out = _PyAST_keyword(arg, value, 1, 0, 1, 0, arena);
@@ -19306,7 +19423,7 @@ PyArena *arena)
 
 static int
 ann_ast_operator(PyObject *data, Py_ssize_t *pos, operator_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 value = ann_ast_next(data, pos);
     if (value == 0xFF) {
@@ -19318,7 +19435,7 @@ PyArena *arena)
 
 static int
 ann_ast_unaryop(PyObject *data, Py_ssize_t *pos, unaryop_ty *out,
-PyArena *arena)
+PyArena *arena, PyObject *private_name, PyObject *mangled_names)
 {
     Py_UCS1 value = ann_ast_next(data, pos);
     if (value == 0xFF) {
@@ -19329,7 +19446,8 @@ PyArena *arena)
 }
 
 PyObject *
-_PyAST_FromAnnotationString(PyArena *arena, PyObject *data)
+_PyAST_FromAnnotationString(PyArena *arena, PyObject *data,
+                            PyObject *private_name, PyObject *mangled_names)
 {
     if (!data || !PyUnicode_CheckExact(data)) {
         PyErr_SetString(PyExc_TypeError, "expected a string for data");
@@ -19338,7 +19456,8 @@ _PyAST_FromAnnotationString(PyArena *arena, PyObject *data)
     Py_ssize_t pos = 0;
     char *error_msg = NULL;
     expr_ty expr_ast;
-    if (ann_ast_expr(data, &pos, &expr_ast, arena) < 0) {
+    if (ann_ast_expr(data, &pos, &expr_ast, arena, private_name,
+                     mangled_names) < 0) {
         error_msg = "parsing annotation expression";
         goto parsing_err;
     }
@@ -19375,7 +19494,8 @@ parsing_err:
 }
 
 PyObject *
-_PyAST_FromAnnotationData(PyObject *data)
+_PyAST_FromAnnotationData(PyObject *data, PyObject *private_name,
+                          PyObject *mangled_names)
 {
     if (!data || !(PyAnyDict_CheckExact(data) || PyUnicode_CheckExact(data))) {
         PyErr_Format(PyExc_TypeError, "expected a dictionary or string for data, got %R", data);
@@ -19387,7 +19507,8 @@ _PyAST_FromAnnotationData(PyObject *data)
     }
 
     if (PyUnicode_CheckExact(data)) {
-        PyObject *out = _PyAST_FromAnnotationString(arena, data);
+        PyObject *out = _PyAST_FromAnnotationString(
+            arena, data, private_name, mangled_names);
         _PyArena_Free(arena);
         return out;
     }
@@ -19398,7 +19519,8 @@ _PyAST_FromAnnotationData(PyObject *data)
     PyObject *name, *data_string;
     Py_ssize_t pos = 0;
     while (PyDict_Next(data, &pos, &name, &data_string)) {
-        PyObject *expr_obj = _PyAST_FromAnnotationString(arena, data_string);
+        PyObject *expr_obj = _PyAST_FromAnnotationString(
+            arena, data_string, private_name, mangled_names);
         if (!expr_obj) {
             goto parsing_err;
         }
@@ -19420,7 +19542,7 @@ parsing_err:
 static PyObject *
 ast_from_annotation_data(PyObject *Py_UNUSED(module), PyObject *data)
 {
-    return _PyAST_FromAnnotationData(data);
+    return _PyAST_FromAnnotationData(data, NULL, NULL);
 }
 
 /* Helper for checking if a node class is abstract in the tests. */

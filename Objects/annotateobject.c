@@ -138,12 +138,10 @@ annotate_repr(PyObject *op)
 }
 
 PyObject *
-_eval_ast(PyObject *ann_ast_class, PyObject *format, PyObject *ast, PyObject *namespace,
-    PyObject *private_name, PyObject *mangled_names)
+_eval_ast(PyObject *ann_ast_class, PyObject *format, PyObject *ast, PyObject *namespace)
 {
     PyObject *ann_ast = PyObject_CallFunctionObjArgs(
-        ann_ast_class, ast, namespace, private_name, mangled_names, NULL
-    );
+        ann_ast_class, ast, namespace, NULL);
     if (!ann_ast) {
         return NULL;
     }
