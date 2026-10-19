@@ -17,8 +17,7 @@ PyAPI_DATA(PyTypeObject) PyAnnotate_Type;
 typedef struct {
     PyObject_HEAD
     PyObject *ann_qualname;     // str; __name__ is its last dotted component
-    PyObject *ann_freevars;     // tuple of str, parallel to ann_closure
-    PyObject *ann_closure;      // tuple of cells, or NULL
+    PyObject *ann_closure;      // dict mapping freevars to cells, or NULL
     PyObject *ann_globals;      // dict of the defining frame
     PyObject *ann_asts;         // the annotation AST data: a dict for an __annotate__,
                                 // a single str for an evaluate function.

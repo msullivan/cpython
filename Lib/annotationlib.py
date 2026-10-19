@@ -1367,15 +1367,15 @@ class AnnotationNamespace(collections.abc.Mapping):
 
     __slots__ = ("locals", "classdict", "cells", "globals", "explicit_globals")
 
-    def __init__(self, locals=None, *, classdict=None, cells=None, globals=None, explicit_globals=None):
+    def __init__(self, locals=None, classdict=None, cells=None, globals=None, explicit_globals=None):
         self.locals = locals
         self.classdict = classdict
         self.cells = cells
         self.globals = globals or {}
-        self.explicit_globals = explicit_globals or set()
+        self.explicit_globals = explicit_globals
 
     def __getitem__(self, key):
-        if key not in self.explicit_globals:
+        if self.explicit_globals is None or key not in self.explicit_globals:
             if self.locals is not None:
                 try:
                     return self.locals[key]
@@ -1402,8 +1402,8 @@ class AnnotationNamespace(collections.abc.Mapping):
         except KeyError:
             pass
         try:
-            return getattr(self.globals.get("__builtins__", builtins), key)
-        except AttributeError:
+            return self.globals.get("__builtins__", builtins.__dict__)[key]
+        except KeyError:
             pass
         raise KeyError(key)
 
@@ -1467,79 +1467,19 @@ class AnnotationNamespace(collections.abc.Mapping):
             classdict=None,
             cells=self.cells,
             globals=self.globals,
-            self.explicit_globals=self.explicit_globals,
+            explicit_globals=self.explicit_globals,
         )
-
-    @classmethod
-    def from_annotate(cls, annotate):
-        globals = getattr(annotate, "__globals__", None)
-        closure = getattr(annotate, "__closure__", None)
-        freevars = getattr(annotate, "__freevars__", None)
-        explicit_globals = getattr(annotate, "_explicit_globals", None)
-        if freevars is None:
-            code = getattr(annotate, "__code__", None)
-            if code is not None:
-                freevars = getattr(code, "co_freevars", None)
-        if closure is not None and freevars is not None:
-            cells = dict(zip(freevars, closure, strict=True))
-            classdict = cells.get("__classdict__", None)
-            if classdict is not None:
-                try:
-                    classdict = classdict.cell_contents
-                except NameError:
-                    classdict = None
-        else:
-            cells = None
-            classdict = None
-        return cls(globals=globals, cells=cells, classdict=classdict, explicit_globals=explicit_globals)
-
-    @classmethod
-    def from_owner(cls, owner, module_name=None):
-        classdict, cells, globals = None, None, None
-
-        if module_name is not None:
-            globals = getattr(sys.modules.get(module_name, None), "__dict__", None)
-        if globals is None:
-            if isinstance(owner, type):
-                module_name = getattr(owner, "__module__", None)
-                if module_name:
-                    module = sys.modules.get(module_name, None)
-                    if module:
-                        globals = getattr(module, "__dict__", None)
-            elif isinstance(owner, types.ModuleType):
-                globals = getattr(owner, "__dict__", None)
-            elif callable(owner):
-                globals = getattr(owner, "__globals__", None)
-        if globals is None:
-            globals = {}
-
-        if isinstance(owner, type):
-            classdict = owner.__dict__
-
-        type_params = getattr(owner, "__type_params__", None)
-        if type_params:
-            cells = {param.__name__: types.CellType(param) for param in type_params}
-
-        return cls(classdict=classdict, cells=cells, globals=globals)
 
 
 class AnnotationAST:
-    __slots__ = ("ast", "namespace", "private_name", "mangled_names")
+    __slots__ = ("ast", "namespace")
 
-    def __init__(
-        self,
-        ast,
-        namespace=None,
-        private_name=None,
-        mangled_names=None,
-    ):
+    def __init__(self, ast, namespace=None):
         super().__init__()
         self.ast = ast
-        if not isinstance(namespace, _AnnotationNamespace):
-            namespace = _AnnotationNamespace(namespace)
+        if not isinstance(namespace, AnnotationNamespace):
+            namespace = AnnotationNamespace(namespace)
         self.namespace = namespace
-        self.private_name = private_name
-        self.mangled_names = mangled_names
 
     def __repr__(self):
         return f"AnnotationAST(ast={self.ast!r}, namespace={self.namespace!r})"

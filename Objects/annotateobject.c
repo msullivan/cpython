@@ -19,7 +19,6 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
     if (PyUnicode_Check(data)) {
         self->ann_qualname = Py_NewRef(data);
         self->ann_closure = NULL;
-        self->ann_freevars = NULL;
         self->ann_explicit_globals = NULL;
         self->ann_private_name = NULL;
         self->ann_mangled_names = NULL;
@@ -48,9 +47,21 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
                      "malformed annotation function data: %R", data);
         return -1;
     }
-    assert(PyTuple_GET_SIZE(cells) == PyTuple_GET_SIZE(freevars));
-    self->ann_closure = Py_NewRef(cells);
-    self->ann_freevars = Py_NewRef(freevars);
+    PyObject *closure = NULL;
+    if (cells != Py_None) {
+        assert(PyTuple_GET_SIZE(cells) == PyTuple_GET_SIZE(freevars));
+        closure = PyDict_New();
+        if (!closure) {
+            return -1;
+        }
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(cells); i++) {
+            if (PyDict_SetItem(closure, PyTuple_GET_ITEM(freevars, i), PyTuple_GET_ITEM(cells, i)) < 0) {
+                Py_DECREF(closure);
+                return -1;
+            }
+        }
+    }
+    self->ann_closure = closure;
     self->ann_explicit_globals = Py_NewRef(explicit_globals);
     self->ann_private_name = Py_NewRef(private_name);
     self->ann_mangled_names = Py_NewRef(mangled_names);
@@ -84,7 +95,6 @@ annotate_traverse(PyObject *op, visitproc visit, void *arg)
 {
     PyAnnotateObject *self = PyAnnotateObject_CAST(op);
     Py_VISIT(self->ann_qualname);
-    Py_VISIT(self->ann_freevars);
     Py_VISIT(self->ann_closure);
     Py_VISIT(self->ann_globals);
     Py_VISIT(self->ann_asts);
@@ -99,7 +109,6 @@ annotate_clear(PyObject *op)
 {
     PyAnnotateObject *self = PyAnnotateObject_CAST(op);
     Py_CLEAR(self->ann_qualname);
-    Py_CLEAR(self->ann_freevars);
     Py_CLEAR(self->ann_closure);
     Py_CLEAR(self->ann_globals);
     Py_CLEAR(self->ann_asts);
@@ -187,41 +196,67 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    PyObject *parsed_asts = _PyAST_FromAnnotationData(self->ann_asts);
+    PyObject *private_name, *mangled_names;
+    PyObject *string_format = PyLong_FromLong(_Py_ANNOTATE_FORMAT_STRING);
+    if (!string_format) {
+        return NULL;
+    }
+    if (PyObject_RichCompareBool(format, string_format, Py_EQ) == 1) {
+        private_name = NULL;
+        mangled_names = NULL;
+    } else {
+        private_name = self->ann_private_name;
+        mangled_names = self->ann_mangled_names;
+    }
+    Py_DECREF(string_format);
+    PyObject *parsed_asts = _PyAST_FromAnnotationData(
+        self->ann_asts, private_name, mangled_names);
     if (!parsed_asts) {
         return NULL;
     }
+
     PyObject *namespace_class = PyImport_ImportModuleAttrString(
         "annotationlib", "AnnotationNamespace"
     );
     if (!namespace_class) {
+        Py_DECREF(parsed_asts);
         return NULL;
     }
-    PyObject *namespace = PyObject_CallMethodObjArgs(namespace_class, &_Py_ID(from_annotate), self, NULL);
+    PyObject *classdict = NULL;
+    if (self->ann_closure) {
+        classdict = PyDict_GetItemString(self->ann_closure, "__classdict__");
+        if (classdict) {
+            classdict = PyCell_Get(classdict);
+            if (PyErr_Occurred()) {
+                Py_DECREF(parsed_asts);
+                return NULL;
+            }
+        }
+    }
+    PyObject *namespace = PyObject_CallFunctionObjArgs(
+        namespace_class,
+        Py_None,
+        classdict ? classdict : Py_None,
+        self->ann_closure ? self->ann_closure : Py_None,
+        self->ann_globals ? self->ann_globals : Py_None,
+        self->ann_explicit_globals ? self->ann_explicit_globals : Py_None,
+        NULL
+    );
     Py_DECREF(namespace_class);
     if (!namespace) {
+        Py_DECREF(parsed_asts);
         return NULL;
     }
+    PyObject *result = NULL;
     PyObject *annASTClass = PyImport_ImportModuleAttrString(
         "annotationlib", "AnnotationAST"
     );
     if (!annASTClass) {
-        Py_DECREF(namespace);
-        return NULL;
+        goto failed;
     }
-    PyObject *private_name = self->ann_private_name;
-    if (!private_name) {
-        private_name = Py_None;
-    }
-    PyObject *mangled_names = self->ann_mangled_names;
-    if (!mangled_names) {
-        mangled_names = Py_None;
-    }
-    PyObject *result = NULL;
     if (is_evaluate) {
         assert(PyUnicode_Check(parsed_asts));
-        result = _eval_ast(annASTClass, format, parsed_asts, namespace,
-            private_name, mangled_names);
+        result = _eval_ast(annASTClass, format, parsed_asts, namespace);
     } else {
         assert(PyDict_Check(parsed_asts));
         result = PyDict_New();
@@ -231,27 +266,28 @@ annotate_call(PyObject *op, PyObject *args, PyObject *kwargs)
         PyObject *key, *value;
         Py_ssize_t pos = 0;
         while (PyDict_Next(parsed_asts, &pos, &key, &value)) {
-            PyObject *evaluated = _eval_ast(annASTClass, format, value, namespace,
-                private_name, mangled_names);
+            PyObject *evaluated = _eval_ast(annASTClass, format, value, namespace);
             if (!evaluated) {
-                Py_DECREF(result);
-                result = NULL;
                 goto failed;
             }
             if (PyDict_SetItem(result, key, evaluated) < 0) {
                 Py_DECREF(evaluated);
-                Py_DECREF(result);
-                result = NULL;
                 goto failed;
             }
             Py_DECREF(evaluated);
         }
     }
-failed:
-    Py_DECREF(annASTClass);
-    Py_DECREF(namespace);
-    Py_DECREF(parsed_asts);
+    Py_XDECREF(annASTClass);
+    Py_XDECREF(namespace);
+    Py_XDECREF(parsed_asts);
     return result;
+
+failed:
+    Py_XDECREF(annASTClass);
+    Py_XDECREF(namespace);
+    Py_XDECREF(parsed_asts);
+    Py_XDECREF(result);
+    return NULL;
 }
 
 static PyObject *
@@ -309,8 +345,7 @@ static PyGetSetDef annotate_getsetlist[] = {
 static PyMemberDef annotate_memberlist[] = {
     {"__qualname__", _Py_T_OBJECT, ANN_OFF(ann_qualname), Py_READONLY},
     {"__globals__", _Py_T_OBJECT, ANN_OFF(ann_globals), Py_READONLY},
-    {"__closure__", _Py_T_OBJECT, ANN_OFF(ann_closure), Py_READONLY},
-    {"__freevars__", _Py_T_OBJECT, ANN_OFF(ann_freevars), Py_READONLY},
+    {"_closure", _Py_T_OBJECT, ANN_OFF(ann_closure), Py_READONLY},
     {"_asts", _Py_T_OBJECT, ANN_OFF(ann_asts), Py_READONLY},
     {"_explicit_globals", _Py_T_OBJECT, ANN_OFF(ann_explicit_globals), Py_READONLY},
     {"_private_name", _Py_T_OBJECT, ANN_OFF(ann_private_name), Py_READONLY},
