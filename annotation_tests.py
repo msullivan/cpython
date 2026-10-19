@@ -7,10 +7,64 @@ import tracemalloc
 from annotationlib import Format
 import timeit
 from pathlib import Path
-from typing import eval_annotate_as_types
+from dataclasses import InitVar, dataclass
+from typing import Annotated, ClassVar, eval_annotate_as_types
 from contextlib import redirect_stdout
-
 import subprocess
+
+
+class _Address:
+    pass
+
+
+def _measure_dataclass_creation(class_factory, iterations=1000):
+    elapsed = 0.0
+    for _ in range(iterations):
+        cls = class_factory()
+        start = timeit.default_timer()
+        dataclass(cls)
+        elapsed += timeit.default_timer() - start
+    return elapsed / iterations
+
+
+def make_simple_class():
+    class Simple:
+        id: int
+        name: str
+        active: bool
+        score: float
+
+    return Simple
+
+
+def make_complex_class():
+    class Complex:
+        id: int
+        name: str
+        address: _Address
+        addresses: list[_Address]
+        metadata: dict[str, str]
+        nickname: str | None
+        score: Annotated[int, "display score"]
+        _cache: ClassVar[dict[str, object]]
+        source: InitVar[str]
+
+    return Complex
+
+
+def make_forwardref_class():
+    class ForwardRef:
+        id: int
+        name: str
+        address: MissingAddress
+        addresses: list[MissingAddress]
+        metadata: dict[str, str]
+        nickname: str | None
+        score: Annotated[MissingScore, "display score"]
+        _cache: ClassVar[dict[str, object]]
+        source: InitVar[str]
+
+    return ForwardRef
 
 
 def run_test():
@@ -80,7 +134,20 @@ def run_test():
                 eval_annotate_as_types(annotate, format=Format.VALUE)
                 time += timeit.default_timer() - time_start
 
-    return import_time, memory, pyc_size, time
+    tracemalloc.stop()
+    simple = _measure_dataclass_creation(make_simple_class)
+    complex = _measure_dataclass_creation(make_complex_class)
+    forwardref = _measure_dataclass_creation(make_forwardref_class)
+
+    return (
+        import_time,
+        memory,
+        pyc_size,
+        time,
+        simple,
+        complex,
+        forwardref,
+    )
 
 
 code = """
@@ -93,25 +160,27 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         count = int(sys.argv[1])
 
-    import_time, memory, pyc, exec_time = 0, 0, 0, 0
+    res = (0.0,) * 7
     if count > 1:
         procs = [subprocess.run([sys.executable, "-c", code], capture_output=True, text=True) for _ in range(count)]
         for proc in procs:
             if proc.stderr:
                 print(proc.stderr)
                 raise SystemExit
-            i, m, p, e = (float(x) / len(procs) for x in proc.stdout.split())
-            import_time += i
-            memory += m
-            pyc += p
-            exec_time += e
+            res = tuple(
+                curr + float(x) / len(procs)
+                for curr, x in zip(res, proc.stdout.split())
+            )
     else:
         sys.argv = ["annotation_tests.py"]
-        import_time, memory, pyc, exec_time = run_test()
+        res = run_test()
 
     print(
-        f"Import time: {import_time:.2f}s\n"
-        f"Memory: {memory / 1_000_000:.3f} MB\n"
-        f"Pyc size: {pyc / 1_000_000:.3f} MB\n"
-        f"Exec time: {exec_time:.4f}s"
+        f"Import time: {res[0]:.2f} s\n"
+        f"Memory: {res[1] / 1_000_000:.3f} MB\n"
+        f"Pyc size: {res[2] / 1_000_000:.3f} MB\n"
+        f"Exec time: {res[3]:.4f} s\n"
+        f"Dataclass creation (simple): {res[4] * 1_000_000:.2f} us\n"
+        f"Dataclass creation (complex): {res[5] * 1_000_000:.2f} us\n"
+        f"Dataclass creation (forward refs): {res[6] * 1_000_000:.2f} us"
     )
