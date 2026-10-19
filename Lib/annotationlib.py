@@ -1308,33 +1308,15 @@ _ANNOTATION_AST_SKIP_CLASS = "__annotation_ast_skip_class__"
 class _AnnotationASTTransformer(ast.NodeTransformer):
     """Reproduces name mangling and class scopes for annotations."""
 
-    def __init__(self, explicit_globals, private_name, mangled_names):
-        self.explicit_globals = explicit_globals or ()
-        if isinstance(private_name, str) and not private_name.lstrip("_"):
-            private_name = None
-        self.private_name = private_name
-        self.mangled_names = mangled_names or ()
+    def __init__(self):
         self.scope = 0
         super().__init__()
 
-    def maybe_mangle(self, name):
-        if self.private_name is None or name not in self.mangled_names:
-            return name
-        return self.private_name + name
-
     def visit_Name(self, node):
         node.id = self.maybe_mangle(node.id)
-        if self.scope > 0 or node.id in self.explicit_globals:
-            new = ast.Subscript(
-                ast.Name(_ANNOTATION_AST_SKIP_CLASS),
-                node,
-            )
+        if self.scope > 0:
+            new = ast.Subscript(ast.Name(_ANNOTATION_AST_SKIP_CLASS), node)
             return ast.copy_location(new, node)
-        return node
-
-    def visit_Attribute(self, node):
-        self.generic_visit(node)
-        node.attr = self.maybe_mangle(node.attr)
         return node
 
     def visit_Lambda(self, node):
@@ -1501,13 +1483,24 @@ class AnnotationAST:
             return ref
         elif format == Format.VALUE_WITH_FAKE_GLOBALS:
             raise NotImplementedError
-        if _ANNOTATION_AST_SKIP_CLASS in self.namespace:
-            transformer = _AnnotationASTTransformer(
-                self.namespace.explicit_globals, self.private_name, self.mangled_names
-            )
+
+        # we need this so that stringified annotations aren't quoted twice
+        # i.e. 'a: int' with the future import or 'a: "int"' without
+        # should result in just the string "int" and not "'int'"
+        if isinstance(self.ast.body, ast.Constant):
+            return self.ast.body.value
+
+        # this makes inner scopes work properly when eval'd
+        if self.namespace.classdict is not None:
+            transformer = _AnnotationASTTransformer()
             ann_ast = transformer.visit(self.ast)
+            namespace = self.namespace.as_inner_scope()
         else:
             ann_ast = self.ast
+            namespace = self.namespace
+
+        # this makes things like 'def f[*T](*args: *T): ...' be eval'able,
+        # otherwise a bare unpack is a syntax error
         if isinstance(ann_ast.body, ast.Starred):
             ann_ast = ast.Expression(
                 ast.Subscript(
@@ -1516,7 +1509,8 @@ class AnnotationAST:
                     ast.Load(),
                 )
             )
-        return eval(compile(ann_ast, "<annotation>", "eval"), globals={}, locals=self.namespace)
+
+        return eval(compile(ann_ast, "<annotation>", "eval"), globals={}, locals=namespace)
 
     def evaluate_type(self, format):
         return typing.eval_annotation_AST(self.ast, self.namespace, format=format)
