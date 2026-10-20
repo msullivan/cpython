@@ -166,10 +166,12 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         count = int(sys.argv[1])
     clean = len(sys.argv) >= 3 and sys.argv[2] == "c"
+    sys.argv = ["annotation_tests.py"]
 
     res = (0.0,) * 7
     if count > 1:
         if not clean and not list(VENV_PATH.glob("**/__pycache__")):
+            sys.path.insert(0, str(VENV_PATH))
             for package in PACKAGES:
                 for mod in iter_modules(package):
                     pass
@@ -184,7 +186,6 @@ if __name__ == "__main__":
                 for curr, x in zip(res, proc.stdout.split())
             )
     else:
-        sys.argv = ["annotation_tests.py"]
         res = run_test(clean)
 
     print(
