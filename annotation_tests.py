@@ -169,6 +169,7 @@ if __name__ == "__main__":
     sys.argv = ["annotation_tests.py"]
 
     res = (0.0,) * 7
+    import_times = []
     if count > 1:
         if not clean and not list(VENV_PATH.glob("**/__pycache__")):
             sys.path.insert(0, str(VENV_PATH))
@@ -185,11 +186,13 @@ if __name__ == "__main__":
                 curr + float(x) / len(procs)
                 for curr, x in zip(res, proc.stdout.split())
             )
+            import_times.append(float(proc.stdout.split()[0]))
     else:
         res = run_test(clean)
 
     print(
-        f"Import time: {res[0]:.2f} s\n"
+        f"Import times: {", ".join(f"{t:.2f}" for t in import_times)}\n"
+        f"Average import time: {res[0]:.2f} s\n"
         f"Memory: {res[1] / 1_000_000:.3f} MB\n"
         f"Pyc size: {res[2] / 1_000_000:.3f} MB\n"
         f"Exec time: {res[3]:.4f} s\n"
