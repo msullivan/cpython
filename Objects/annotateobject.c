@@ -24,20 +24,18 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
         self->ann_mangled_names = NULL;
         return 0;
     }
-    if (!PyTuple_Check(data) || PyTuple_GET_SIZE(data) != 6) {
+    if (!PyTuple_Check(data) || PyTuple_GET_SIZE(data) != 5) {
         PyErr_Format(PyExc_SystemError,
                      "malformed annotation function data: %R", data);
         return -1;
     }
-    PyObject *cells = PyTuple_GET_ITEM(data, 0);
-    PyObject *freevars = PyTuple_GET_ITEM(data, 1);
-    PyObject *explicit_globals = PyTuple_GET_ITEM(data, 2);
-    PyObject *private_name = PyTuple_GET_ITEM(data, 3);
-    PyObject *mangled_names = PyTuple_GET_ITEM(data, 4);
-    PyObject *qualname = PyTuple_GET_ITEM(data, 5);
+    PyObject *closure = PyTuple_GET_ITEM(data, 0);
+    PyObject *explicit_globals = PyTuple_GET_ITEM(data, 1);
+    PyObject *private_name = PyTuple_GET_ITEM(data, 2);
+    PyObject *mangled_names = PyTuple_GET_ITEM(data, 3);
+    PyObject *qualname = PyTuple_GET_ITEM(data, 4);
 
-    if (   !(cells == Py_None || PyTuple_Check(cells))
-        || !(freevars == Py_None || PyTuple_Check(freevars))
+    if (   !(closure == Py_None || PyDict_Check(closure))
         || !(explicit_globals == Py_None || PyTuple_Check(explicit_globals))
         || !(private_name == Py_None || PyUnicode_Check(private_name))
         || !(mangled_names == Py_None || PyFrozenSet_Check(mangled_names))
@@ -47,21 +45,7 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
                      "malformed annotation function data: %R", data);
         return -1;
     }
-    PyObject *closure = NULL;
-    if (cells != Py_None) {
-        assert(PyTuple_GET_SIZE(cells) == PyTuple_GET_SIZE(freevars));
-        closure = PyDict_New();
-        if (!closure) {
-            return -1;
-        }
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(cells); i++) {
-            if (PyDict_SetItem(closure, PyTuple_GET_ITEM(freevars, i), PyTuple_GET_ITEM(cells, i)) < 0) {
-                Py_DECREF(closure);
-                return -1;
-            }
-        }
-    }
-    self->ann_closure = closure;
+    self->ann_closure = Py_NewRef(closure);
     self->ann_explicit_globals = Py_NewRef(explicit_globals);
     self->ann_private_name = Py_NewRef(private_name);
     self->ann_mangled_names = Py_NewRef(mangled_names);
@@ -72,7 +56,7 @@ unpack_data(PyObject *data, PyAnnotateObject *self)
 // annotate arguments are:
 // * asts: a single AST string or a dict mapping variable names to them
 // * globals: globals dict
-// * data: either the qualname or a tuple of (cells, freevars, explicit_globals, private_name, qualname)
+// * data: either the qualname or a tuple of (closure, explicit_globals, private_name, mangled, qualname)
 PyObject *
 _PyAnnotate_New(PyObject *asts, PyObject *globals, PyObject *data)
 {

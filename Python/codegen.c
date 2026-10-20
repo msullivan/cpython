@@ -723,16 +723,21 @@ codegen_annotate(compiler *c, location loc, void *key, PyObject *name) {
             PyObject *freevars = PyTuple_GET_ITEM(name_data, 0);
             Py_ssize_t n = PyTuple_GET_SIZE(freevars);
             for (Py_ssize_t i = 0; i < n; i++) {
-                int arg = _PyCompile_LookupArg(c, NULL, PyTuple_GET_ITEM(freevars, i));
+                PyObject *name = PyTuple_GET_ITEM(freevars, i);
+                if (!name) {
+                    return ERROR;
+                }
+                int arg = _PyCompile_LookupArg(c, NULL, name);
                 RETURN_IF_ERROR(arg);
+                ADDOP_LOAD_CONST(c, loc, name);
                 ADDOP_I(c, loc, LOAD_CLOSURE, arg);
             }
-            ADDOP_I(c, loc, BUILD_TUPLE, n);
+            ADDOP_I(c, loc, BUILD_MAP, n);
         }
-        ADDOP_I(c, loc, BUILD_LIST, 1);
-        ADDOP_LOAD_CONST(c, loc, name_data);
-        ADDOP_I(c, loc, LIST_EXTEND, 1);
-        ADDOP_I(c, loc, CALL_INTRINSIC_1, INTRINSIC_LIST_TO_TUPLE);
+        for (Py_ssize_t i = 1; i < 5; i ++) {
+            ADDOP_LOAD_CONST(c, loc, PyTuple_GET_ITEM(name_data, i));
+        }
+        ADDOP_I(c, loc, BUILD_TUPLE, 5);
     }
     ADDOP_I(c, loc, CALL_INTRINSIC_2, INTRINSIC_MAKE_ANNOTATE);
     return SUCCESS;
