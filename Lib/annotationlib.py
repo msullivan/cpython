@@ -1313,7 +1313,6 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
         super().__init__()
 
     def visit_Name(self, node):
-        node.id = self.maybe_mangle(node.id)
         if self.scope > 0:
             new = ast.Subscript(ast.Name(_ANNOTATION_AST_SKIP_CLASS), node)
             return ast.copy_location(new, node)
@@ -1323,7 +1322,7 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
         node.args = self.visit(node.args)
         self.scope += 1
         body = self.visit(node.body)
-        node.self.scope -= 1
+        self.scope -= 1
         return node
 
     def _visit_comprehension(self, node):
@@ -1424,7 +1423,8 @@ class AnnotationNamespace(collections.abc.Mapping):
         for namespace in (self.locals, self.classdict, self.cells):
             if namespace is not None:
                 names.update(namespace.keys())
-        names -= self.explicit_globals
+        if self.explicit_globals:
+            names -= self.explicit_globals
         names.update(self.globals.keys())
         return names
 
@@ -1471,12 +1471,13 @@ class AnnotationAST:
             return self
         elif format == Format.STRING:
             return ast.unparse(self.ast)
+        # XXX: should not actually ForwardRef every time!!
         elif format == Format.FORWARDREF:
             module = self.namespace.globals.get("__name__", None)
             ref = ForwardRef(ast.unparse(self.ast), module=module)
             ref.__ast_node__ = self.ast
             ref.__globals__ = self.namespace.globals
-            if len(self.namespace.cells) == 1:
+            if self.namespace.cells and len(self.namespace.cells) == 1:
                 ref.__cell__ = next(iter(self.namespace.cells.values()))
             else:
                 ref.__cell__ = self.namespace.cells
