@@ -941,9 +941,9 @@ extern PyObject* _PyAST_ExprAsUnicode(expr_ty);
 extern PyObject* _PyAST_GetAnnotationAST(expr_ty, int);
 
 extern PyObject* _PyAST_FromAnnotationString(
-    PyArena *, PyObject *, PyObject *, PyObject *);
+   PyArena *, PyObject *, PyObject *);
 extern PyObject* _PyAST_FromAnnotationData(
-    PyObject *, PyObject *, PyObject *);
+    PyObject *, PyObject *);
 
 /* Return the borrowed reference to the first literal string in the
    sequence of statements or NULL if it doesn't start from a literal string.
