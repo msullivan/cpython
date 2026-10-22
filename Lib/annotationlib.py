@@ -1470,6 +1470,12 @@ class AnnotationAST:
         if format == Format.AST:
             return self
         elif format == Format.STRING:
+            # we need this so that stringified annotations aren't quoted twice
+            # i.e. 'a: int' with the future import or 'a: "int"' without
+            # should result in just the string "int" and not "'int'"
+            if isinstance(self.ast.body, ast.Constant) and isinstance(self.ast.body.value, str):
+                return self.ast.body.value
+
             return ast.unparse(self.ast)
         # XXX: should not actually ForwardRef every time!!
         elif format == Format.FORWARDREF:
@@ -1484,12 +1490,6 @@ class AnnotationAST:
             return ref
         elif format == Format.VALUE_WITH_FAKE_GLOBALS:
             raise NotImplementedError
-
-        # we need this so that stringified annotations aren't quoted twice
-        # i.e. 'a: int' with the future import or 'a: "int"' without
-        # should result in just the string "int" and not "'int'"
-        if isinstance(self.ast.body, ast.Constant):
-            return self.ast.body.value
 
         # this makes inner scopes work properly when eval'd
         if self.namespace.classdict is not None:

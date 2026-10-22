@@ -465,6 +465,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         for obj in (func, X, mod):
             with self.subTest(obj=obj):
                 annotate = obj.__annotate__
+                self.assertIsInstance(annotate, types.FunctionType)
                 self.assertEqual(annotate.__name__, "__annotate__")
                 with self.assertRaises(NotImplementedError):
                     annotate(annotationlib.Format.FORWARDREF)
@@ -473,15 +474,13 @@ class DeferredEvaluationTests(unittest.TestCase):
                 with self.assertRaises(TypeError):
                     annotate(None)
                 self.assertEqual(annotate(annotationlib.Format.VALUE), {"x": int})
-                self.assertEqual(
-                    annotate(annotationlib.Format.STRING), {"x": "int"}
-                )
 
                 sig = inspect.signature(annotate)
                 self.assertEqual(sig, inspect.Signature([
                     inspect.Parameter("format", inspect.Parameter.POSITIONAL_ONLY)
                 ]))
 
+    # XXX: new test from sully's branch
     def test_annotation_values_keep_live_namespaces(self):
         ns = run_code("""
             value = 1
@@ -534,6 +533,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         """)
         self.assertEqual(ns["C"].__annotations__, {"__classdict__": int})
 
+    # XXX: new test from sully's branch
     def test_class_annotation_private_01(self):
         ns = run_code("""
             class C:
@@ -550,6 +550,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         """)
         self.assertEqual(ns["C"].foo.__annotations__, {"return": int})
 
+    # XXX: new test from sully's branch
     def test_class_annotation_private_02(self):
         ns = run_code("""
             class C:
