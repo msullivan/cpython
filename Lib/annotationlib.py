@@ -922,7 +922,13 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
         # NotImplementedError for this format.
         raise RuntimeError("annotate function does not support VALUE format")
     elif format == Format.AST:
-        raise RuntimeError("annotate function does not support AST format")
+        # Fall back to parsing the STRING format output.
+        result = call_annotate_function(
+            annotate, Format.STRING, owner=owner, _is_evaluate=_is_evaluate
+        )
+        return _string_annotations_to_ast(
+            result, getattr(annotate, "__globals__", None)
+        )
     else:
         raise ValueError(f"Invalid format: {format!r}")
 
@@ -1077,6 +1083,15 @@ def get_annotations(
             ann = _get_and_call_annotate(obj, format)
             if ann is not None:
                 return dict(ann)
+            # If there's no __annotate__, fall back to __annotations__,
+            # parsing any stringified annotations.
+            ann = _get_dunder_annotations(obj)
+            if ann is not None:
+                # For classes, the "locals" are the class namespace.
+                obj_globals, classdict = _get_obj_namespaces(obj)
+                if globals is None:
+                    globals = obj_globals
+                return _string_annotations_to_ast(ann, globals, classdict)
         case _:
             raise ValueError(f"Unsupported format {format!r}")
 
@@ -1092,57 +1107,7 @@ def get_annotations(
         return dict(ann)
 
     if globals is None or locals is None:
-        if isinstance(obj, type):
-            # class
-            obj_globals = None
-            module_name = getattr(obj, "__module__", None)
-            if module_name:
-                module = sys.modules.get(module_name, None)
-                if module:
-                    obj_globals = getattr(module, "__dict__", None)
-            obj_locals = dict(vars(obj))
-            unwrap = obj
-        elif isinstance(obj, types.ModuleType):
-            # module
-            obj_globals = getattr(obj, "__dict__")
-            obj_locals = None
-            unwrap = None
-        elif callable(obj):
-            # this includes types.Function, types.BuiltinFunctionType,
-            # types.BuiltinMethodType, functools.partial, functools.singledispatch,
-            # "class funclike" from Lib/test/test_inspect... on and on it goes.
-            obj_globals = getattr(obj, "__globals__", None)
-            obj_locals = None
-            unwrap = obj
-        else:
-            obj_globals = obj_locals = unwrap = None
-
-        if unwrap is not None:
-            # Use an id-based visited set to detect cycles in the __wrapped__
-            # and functools.partial.func chain (e.g. f.__wrapped__ = f).
-            # On cycle detection we stop and use whatever __globals__ we have
-            # found so far, mirroring the approach of inspect.unwrap().
-            _seen_ids = {id(unwrap)}
-            while True:
-                if hasattr(unwrap, "__wrapped__"):
-                    candidate = unwrap.__wrapped__
-                    if id(candidate) in _seen_ids:
-                        break
-                    _seen_ids.add(id(candidate))
-                    unwrap = candidate
-                    continue
-                if functools := sys.modules.get("functools"):
-                    if isinstance(unwrap, functools.partial):
-                        candidate = unwrap.func
-                        if id(candidate) in _seen_ids:
-                            break
-                        _seen_ids.add(id(candidate))
-                        unwrap = candidate
-                        continue
-                break
-            if hasattr(unwrap, "__globals__"):
-                obj_globals = unwrap.__globals__
-
+        obj_globals, obj_locals = _get_obj_namespaces(obj)
         if globals is None:
             globals = obj_globals
         if locals is None:
@@ -1162,6 +1127,65 @@ def get_annotations(
         for key, value in ann.items()
     }
     return return_value
+
+
+def _get_obj_namespaces(obj):
+    """Return the default (globals, locals) for evaluating obj's annotations.
+
+    Either may be None if it can't be determined.
+    """
+    if isinstance(obj, type):
+        # class
+        obj_globals = None
+        module_name = getattr(obj, "__module__", None)
+        if module_name:
+            module = sys.modules.get(module_name, None)
+            if module:
+                obj_globals = getattr(module, "__dict__", None)
+        obj_locals = dict(vars(obj))
+        unwrap = obj
+    elif isinstance(obj, types.ModuleType):
+        # module
+        obj_globals = getattr(obj, "__dict__")
+        obj_locals = None
+        unwrap = None
+    elif callable(obj):
+        # this includes types.Function, types.BuiltinFunctionType,
+        # types.BuiltinMethodType, functools.partial, functools.singledispatch,
+        # "class funclike" from Lib/test/test_inspect... on and on it goes.
+        obj_globals = getattr(obj, "__globals__", None)
+        obj_locals = None
+        unwrap = obj
+    else:
+        obj_globals = obj_locals = unwrap = None
+
+    if unwrap is not None:
+        # Use an id-based visited set to detect cycles in the __wrapped__
+        # and functools.partial.func chain (e.g. f.__wrapped__ = f).
+        # On cycle detection we stop and use whatever __globals__ we have
+        # found so far, mirroring the approach of inspect.unwrap().
+        _seen_ids = {id(unwrap)}
+        while True:
+            if hasattr(unwrap, "__wrapped__"):
+                candidate = unwrap.__wrapped__
+                if id(candidate) in _seen_ids:
+                    break
+                _seen_ids.add(id(candidate))
+                unwrap = candidate
+                continue
+            if functools := sys.modules.get("functools"):
+                if isinstance(unwrap, functools.partial):
+                    candidate = unwrap.func
+                    if id(candidate) in _seen_ids:
+                        break
+                    _seen_ids.add(id(candidate))
+                    unwrap = candidate
+                    continue
+            break
+        if hasattr(unwrap, "__globals__"):
+            obj_globals = unwrap.__globals__
+
+    return obj_globals, obj_locals
 
 
 def type_repr(value):
@@ -1211,6 +1235,33 @@ def annotations_to_ast(annotations):
         n: annotation_to_ast(t)
         for n, t in annotations.items()
     }
+
+
+def _string_annotations_to_ast(annotations, globals=None, classdict=None):
+    """Convert STRING format results to the AST format by parsing them.
+
+    *annotations* is either a dict (from an annotate function) or a single
+    annotation (from an evaluate function). Non-string values are wrapped
+    using annotation_to_ast(). *globals* and *classdict* are used for name
+    lookups when the resulting ASTs are evaluated.
+    """
+    namespace = AnnotationNamespace(classdict=classdict, globals=globals)
+
+    def convert(value):
+        if not isinstance(value, str):
+            return annotation_to_ast(value)
+        if value.lstrip().startswith("*"):
+            # A bare star unpack like '*Ts' isn't a valid expression, so parse
+            # it inside a tuple and pull the Starred node back out.
+            node = ast.parse(f"({value},)", mode="eval")
+            node.body = node.body.elts[0]
+        else:
+            node = ast.parse(value, mode="eval")
+        return AnnotationAST(node, namespace)
+
+    if isinstance(annotations, dict):
+        return {key: convert(value) for key, value in annotations.items()}
+    return convert(annotations)
 
 def _rewrite_star_unpack(arg):
     """If the given argument annotation expression is a star unpack e.g. `'*Ts'`

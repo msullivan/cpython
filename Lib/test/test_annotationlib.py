@@ -692,13 +692,20 @@ class TestGetAnnotations(unittest.TestCase):
 
         foo.__annotations__ = {"a": "foo", "b": "str"}
         for format in Format:
-            if format == Format.VALUE_WITH_FAKE_GLOBALS:
+            if format in (Format.VALUE_WITH_FAKE_GLOBALS, Format.AST):
                 continue
             with self.subTest(format=format):
                 self.assertEqual(
                     get_annotations(foo, format=format),
                     {"a": "foo", "b": "str"},
                 )
+
+        # The AST format parses the stringified annotations.
+        asts = get_annotations(foo, format=Format.AST)
+        self.assertEqual(
+            {k: v.evaluate(Format.STRING) for k, v in asts.items()},
+            {"a": "foo", "b": "str"},
+        )
 
         self.assertEqual(
             get_annotations(foo, eval_str=True, locals=locals()),
