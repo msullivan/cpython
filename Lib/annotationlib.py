@@ -1467,6 +1467,10 @@ class AnnotationAST:
         return f"AnnotationAST(ast={self.ast!r}, namespace={self.namespace!r})"
 
     def evaluate(self, format):
+        if not isinstance(format, int):
+            raise TypeError(
+                f"format must be an int, not {type(format).__name__}"
+            )
         if format == Format.AST:
             return self
         elif format == Format.STRING:
@@ -1488,7 +1492,8 @@ class AnnotationAST:
             else:
                 ref.__cell__ = self.namespace.cells
             return ref
-        elif format == Format.VALUE_WITH_FAKE_GLOBALS:
+        elif format != Format.VALUE:
+            # Includes VALUE_WITH_FAKE_GLOBALS and unknown formats.
             raise NotImplementedError
 
         # this makes inner scopes work properly when eval'd
