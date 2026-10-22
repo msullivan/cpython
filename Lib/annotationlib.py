@@ -652,7 +652,11 @@ def _template_to_ast(template):
 
 class _StringifierDict(dict):
     def __init__(self, namespace, *, globals=None, owner=None, is_class=False, format):
-        super().__init__(namespace)
+        # N.B: This is a dict subtype because it is required to be for
+        # passing to eval, but we actually route *all* accesses
+        # through __missing__ so we can delegate to namespace without
+        # copying.
+        super().__init__()
         self.namespace = namespace
         self.globals = globals
         self.owner = owner
@@ -662,8 +666,19 @@ class _StringifierDict(dict):
         self.format = format
 
     def __missing__(self, key):
+        try:
+            return self.namespace[key]
+        except (KeyError, NameError):
+            pass
+
+        # this case is a missing cell contents, and we want to point the _Stringifier at the cell.
+        cell = None
+        if cells := getattr(self.namespace, 'cells', None):
+            cell = cells.get(key)
+
         fwdref = _Stringifier(
             key,
+            cell=cell,
             globals=self.globals,
             owner=self.owner,
             is_class=self.is_class,
@@ -686,6 +701,9 @@ class _StringifierDict(dict):
         name = f"__annotationlib_name_{self.next_id}__"
         self.next_id += 1
         return name
+
+    def __repr__(self):
+        return f"_StringifierDict({self.namespace})"
 
 
 def call_evaluate_function(evaluate, format, *, owner=None):
@@ -773,7 +791,9 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
             # this makes inner scopes work properly when eval'd
             ann_ast, namespace = ann_ast.adjust_asts()
             code = compile(ann_ast, "<annotation>", "eval")
-            cell_dict = namespace.cells
+            # XXX: We do a copy because test_forward_equality_and_hash_with_cells wants
+            # the dicts to be unique... but does that matter?
+            cell_dict = dict(namespace.cells) if namespace.cells is not None else None
 
             is_class = isinstance(owner, type)
             globals = _StringifierDict(
