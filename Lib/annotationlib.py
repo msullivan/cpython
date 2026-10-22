@@ -19,6 +19,10 @@ __all__ = [
     "get_annotations",
     "annotations_to_string",
     "type_repr",
+    "AnnotationAST",
+    "AnnotationNamespace",
+    "annotation_to_ast",
+    "annotations_to_ast",
 ]
 
 
@@ -1367,7 +1371,8 @@ class _InsertAnnotations(ast.NodeTransformer):
             node = ast.fix_missing_locations(node)
         return node
 
-def create_annotate_function(annotations):
+# XXX: dead code?
+def _create_annotate_function(annotations):
     # Annotations is a mapping from names to (object, namespace) tuples.
     # Each object either is an AST already, or we try to convert it to one by
     # getting its repr and parsing it. We also try to evaluate it in the given
