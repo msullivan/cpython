@@ -1346,7 +1346,7 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
 class AnnotationNamespace(collections.abc.Mapping):
     """A mapping that combines globals, closure and classdict for an annotation."""
 
-    __slots__ = ("locals", "classdict", "cells", "globals", "explicit_globals")
+    __slots__ = ("locals", "classdict", "cells", "globals", "explicit_globals", "builtins")
 
     def __init__(self, locals=None, classdict=None, cells=None, globals=None, explicit_globals=None):
         self.locals = locals
@@ -1354,6 +1354,12 @@ class AnnotationNamespace(collections.abc.Mapping):
         self.cells = cells
         self.globals = globals or {}
         self.explicit_globals = explicit_globals
+        # apparently in __main__, __builtins__ is a module, but
+        # everywhere else it is a dict!
+        builtins_ns = self.globals.get("__builtins__", builtins.__dict__)
+        if isinstance(builtins_ns, types.ModuleType):
+            builtins_ns = builtins_ns.__dict__
+        self.builtins = builtins_ns
 
     def __getitem__(self, key):
         if self.explicit_globals is None or key not in self.explicit_globals:
@@ -1383,7 +1389,7 @@ class AnnotationNamespace(collections.abc.Mapping):
         except KeyError:
             pass
         try:
-            return self.globals.get("__builtins__", builtins.__dict__)[key]
+            return self.builtins[key]
         except KeyError:
             pass
         raise KeyError(key)
