@@ -2364,8 +2364,6 @@ parsing_err:
         self.emit("Py_DECREF(mangled);", depth + 3)
         self.emit(failure, depth + 3)
         self.emit("}", depth + 2)
-        self.emit("Py_DECREF(%s);" % field_name, depth + 2)
-        self.emit("Py_DECREF(mangled);", depth + 2)
         self.emit("%s = mangled;" % field_name, depth + 2)
         self.emit("}", depth + 1)
         self.emit("}", depth)

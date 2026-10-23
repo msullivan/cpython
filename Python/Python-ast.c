@@ -19141,8 +19141,6 @@ PyArena *arena, PyObject *private_name, PyObject *mangled_names)
                         Py_DECREF(mangled);
                         goto failed;
                     }
-                    Py_DECREF(attr);
-                    Py_DECREF(mangled);
                     attr = mangled;
                 }
             }
@@ -19201,8 +19199,6 @@ PyArena *arena, PyObject *private_name, PyObject *mangled_names)
                         Py_DECREF(mangled);
                         goto failed;
                     }
-                    Py_DECREF(id);
-                    Py_DECREF(mangled);
                     id = mangled;
                 }
             }
