@@ -2019,7 +2019,15 @@ ann_ast_constant_kind(PyObject *data, Py_ssize_t *pos, Py_UCS1 kind,
                 return -1;
             }
             *out = PyLong_FromSsize_t(value);
-            return *out == NULL ? -1 : 0;
+            if (*out == NULL) {
+                return -1;
+            }
+            if (_PyArena_AddPyObject(arena, *out) < 0) {
+                Py_DECREF(*out);
+                *out = NULL;
+                return -1;
+            }
+            return 0;
         }
         case 4: {
             double value;
@@ -2027,7 +2035,15 @@ ann_ast_constant_kind(PyObject *data, Py_ssize_t *pos, Py_UCS1 kind,
                 return -1;
             }
             *out = PyFloat_FromDouble(value);
-            return *out == NULL ? -1 : 0;
+            if (*out == NULL) {
+                return -1;
+            }
+            if (_PyArena_AddPyObject(arena, *out) < 0) {
+                Py_DECREF(*out);
+                *out = NULL;
+                return -1;
+            }
+            return 0;
         }
         case 5: {
             double real, imag;
@@ -2036,7 +2052,15 @@ ann_ast_constant_kind(PyObject *data, Py_ssize_t *pos, Py_UCS1 kind,
                 return -1;
             }
             *out = PyComplex_FromDoubles(real, imag);
-            return *out == NULL ? -1 : 0;
+            if (*out == NULL) {
+                return -1;
+            }
+            if (_PyArena_AddPyObject(arena, *out) < 0) {
+                Py_DECREF(*out);
+                *out = NULL;
+                return -1;
+            }
+            return 0;
         }
         case 6:
             *out = Py_False;
