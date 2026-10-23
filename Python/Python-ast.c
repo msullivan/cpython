@@ -18132,6 +18132,11 @@ ann_ast_string(PyObject *data, Py_ssize_t *pos, PyObject **out,
     if (*out == NULL) {
         return -1;
     }
+    if (_PyArena_AddPyObject(arena, *out) < 0) {
+        Py_DECREF(*out);
+        *out = NULL;
+        return -1;
+    }
     *pos += len;
     return 0;
 }
@@ -18148,6 +18153,11 @@ ann_ast_bytes(PyObject *data, Py_ssize_t *pos, PyObject **out,
     *out = PyBytes_FromStringAndSize(
         (char *)PyUnicode_1BYTE_DATA(data) + *pos, len);
     if (*out == NULL) {
+        return -1;
+    }
+    if (_PyArena_AddPyObject(arena, *out) < 0) {
+        Py_DECREF(*out);
+        *out = NULL;
         return -1;
     }
     *pos += len;
