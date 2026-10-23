@@ -793,8 +793,8 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
     elif format == Format.FORWARDREF and (asts := _try_ast(annotate)):
         def _eval_one(ann_ast):
             # this makes inner scopes work properly when eval'd
-            ann_ast, namespace = ann_ast.adjust_asts()
-            code = compile(ann_ast, "<annotation>", "eval")
+            namespace = ann_ast.namespace
+            code = compile(ann_ast.adjust_asts(), "<annotation>", "eval")
             # XXX: We do a copy because test_forward_equality_and_hash_with_cells wants
             # the dicts to be unique... but does that matter?
             cell_dict = dict(namespace.cells) if namespace.cells is not None else None
@@ -1443,14 +1443,14 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
 
     def visit_Name(self, node):
         if self.scope > 0:
-            new = ast.Subscript(ast.Name(_ANNOTATION_AST_SKIP_CLASS), node)
+            new = ast.Subscript(ast.Name(_ANNOTATION_AST_SKIP_CLASS), ast.Constant(node.id))
             return ast.copy_location(new, node)
         return node
 
     def visit_Lambda(self, node):
         node.args = self.visit(node.args)
         self.scope += 1
-        body = self.visit(node.body)
+        node.body = self.visit(node.body)
         self.scope -= 1
         return node
 
@@ -1472,6 +1472,21 @@ class _AnnotationASTTransformer(ast.NodeTransformer):
     visit_GeneratorExp = _visit_comprehension
 
 
+class _GlobalsWithFallback(dict):
+    """A globals overlay that preserves a dict subclass's __missing__."""
+
+    __slots__ = ("fallback",)
+
+    def __init__(self, fallback):
+        super().__init__()
+        self.fallback = fallback
+
+    def __missing__(self, key):
+        if self.fallback is None:
+            raise KeyError(key)
+        return self.fallback[key]
+
+
 class AnnotationNamespace(collections.abc.Mapping):
     """A mapping that combines globals, closure and classdict for an annotation."""
 
@@ -1491,6 +1506,9 @@ class AnnotationNamespace(collections.abc.Mapping):
         self.builtins = builtins_ns
 
     def __getitem__(self, key):
+        if key == _ANNOTATION_AST_SKIP_CLASS:
+            return self.as_inner_scope()
+
         if self.explicit_globals is None or key not in self.explicit_globals:
             if self.locals is not None:
                 try:
@@ -1614,11 +1632,10 @@ class AnnotationAST:
         if self.namespace.classdict is not None:
             transformer = _AnnotationASTTransformer()
             ann_ast = transformer.visit(self.ast)
-            namespace = self.namespace.as_inner_scope()
+            ast.fix_missing_locations(ann_ast)
         else:
             ann_ast = self.ast
-            namespace = self.namespace
-        return ann_ast, namespace
+        return ann_ast
 
     def evaluate(self, format):
         if not isinstance(format, int):
@@ -1640,7 +1657,7 @@ class AnnotationAST:
             raise NotImplementedError
 
         # this makes inner scopes work properly when eval'd
-        ann_ast, namespace = self.adjust_asts()
+        ann_ast = self.adjust_asts()
 
         # this makes things like 'def f[*T](*args: *T): ...' be eval'able,
         # otherwise a bare unpack is a syntax error
@@ -1652,8 +1669,9 @@ class AnnotationAST:
                     ast.Load(),
                 )
             )
+            ast.fix_missing_locations(ann_ast)
 
-        return eval(compile(ann_ast, "<annotation>", "eval"), globals={}, locals=namespace)
+        return eval(compile(ann_ast, "<annotation>", "eval"), globals=_GlobalsWithFallback(self.namespace))
 
     def evaluate_type(self, format):
         return typing.eval_annotation_AST(self.ast, self.namespace, format=format)
