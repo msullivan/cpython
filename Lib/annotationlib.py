@@ -1664,7 +1664,7 @@ class AnnotationAST:
         if isinstance(ann_ast.body, ast.Starred):
             ann_ast = ast.Expression(
                 ast.Subscript(
-                    ast.Tuple(elts=[ann_ast.body.value], ctx=ast.Load()),
+                    ast.Tuple(elts=[ann_ast.body], ctx=ast.Load()),
                     ast.Constant(0),
                     ast.Load(),
                 )
